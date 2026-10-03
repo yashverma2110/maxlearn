@@ -10,6 +10,63 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 2. **Review at the right time.** Each card comes back just before you'd forget it, scheduled by **FSRS** or **SM-2**.
 3. **Grow where it counts.** Cards and lessons are aimed at your level per topic, and at the topics you actually use or want to grow in.
 
+## Install
+
+In Claude Code:
+
+```
+/plugin marketplace add yashverma2110/maxlearn
+/plugin install maxlearn@maxlearn
+```
+
+Or run it from a clone:
+
+```sh
+git clone https://github.com/yashverma2110/maxlearn.git
+claude --plugin-dir ./maxlearn
+```
+
+The pane docks beside the chat in terminals at least 144 columns wide; otherwise run `/study`. Your data lives in Claude Code's plugin store on your machine, so it carries across sessions.
+
+## Getting started
+
+### 1. Open the pane
+After installing, start a session. In a terminal at least 144 columns wide the pane docks beside the chat; otherwise run `/study`. In the terminal, press `ctrl+x tab` to give the pane the keyboard and `esc` to give it back.
+
+### 2. Tell it what you want to learn
+The first time, a **welcome** screen asks two things:
+
+1. **Interests:** pick topics from the suggestions, or type your own (for example `kafka`), then **Next**.
+2. **Experience:** *New to this*, *Junior / mid*, *Senior* or *Staff+*. Every topic starts at this level. Then **Start learning**.
+
+maxlearn writes your first two lessons right away; the line under the input shows `⟳ Writing lessons…` while it works. Changed your mind later? Add an interest with `/study <topic>`, change **Experience** in settings, or run `/study welcome` again.
+
+### 3. Learn
+The **learn** tab (`e`) shows one lesson at a time: the idea, why it matters, and an example.
+
+- **Next** (`enter`) adds the lesson's cards to your review. Their first review comes 10 minutes later.
+- **Skip** (`n`) moves on without adding anything.
+- **Simplify** (`z`) rewrites the lesson in simpler words. Later lessons on that topic start a level lower.
+
+You can also learn in the chat: `/study learn` posts a lesson with the same **Next** and **Simplify** buttons.
+
+### 4. Review
+When cards are due, the **review** tab (`r`) shows them one at a time.
+
+1. Read the question and recall the answer in your head.
+2. Press `s` to show the answer.
+3. Grade yourself honestly: `1` again · `2` hard · `3` good · `4` easy, or move with `j` `l` and press `enter`. Each button shows when the card comes back.
+
+Graded wrong by mistake? `u` undoes it. A bad card? `d` drops it for good. Prefer multiple choice? Use **quiz** (`q`).
+
+### 5. Keep going
+- **Just work as usual.** Every few turns maxlearn checks your chat; if you worked something out, it makes cards from it. Pure command-running makes none.
+- **A few minutes a day** beats a long session once a week. The status line shows `📚 3 due · 🔥 5`, your due cards and streak.
+- **Check insights** (`p`) now and then: what to improve, what you're strong in, your recent chats, and where your time goes.
+- **Tune it in settings** (`o`): models, focus (daily work or interests), FSRS, automatic cards, and the takeaways line.
+
+Press `h` in the pane for every key. `/study tips` lists tips for your current state.
+
 ## Features
 
 ### Teaching from your chats
@@ -22,7 +79,7 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 - Interests get new material **automatically**: when a chat touches one (at most every 4h), and once per period (default **24h**, configurable).
 
 ### Personalised cards and lessons
-- **Level adapts per topic:** a new topic starts at senior level, steps down to mid-level if your recall is poor, and up to staff level once you've mastered it.
+- **Level adapts per topic:** every topic starts at your chosen experience, steps down a level if your recall is poor, and up a level once you've mastered it. **Simplify** on a lesson steps that topic down too.
 - **Quality rubric:** one specific idea per card, about mechanisms, trade-offs and failure modes, never definitions. Generic questions are filtered out, and the model sees your existing cards so it goes deeper instead of repeating.
 - **Plain language:** cards follow ASD-STE100 Simplified Technical English (short sentences, active voice, one idea each).
 - **Focus setting:** *daily work*, *balanced* or *my interests* decides which topics come first in review, which weak topics are flagged and what gets suggested.
@@ -53,10 +110,12 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 |---|---|
 | Chat model | session model (cached, cheapest), opus, sonnet, haiku |
 | Interest / lesson model | opus, **sonnet**, haiku |
+| Experience | new to this, junior / mid, **senior**, staff+ |
 | Focus | daily work, **balanced**, my interests |
 | Scheduler | **SM-2**, FSRS (with target recall 85% / **90%** / 95%) |
 | Auto cards | each interest every off / 12h / **24h** / 3 days / week; on chat touch **on** / off; cards from chat **on** / off |
 | Takeaways | off / **every 30s** / every 2m |
+| Start over | deletes all cards, reviews, lessons, interests and history (asks to confirm), keeps settings, and opens the welcome screen |
 
 ### Spaced repetition: FSRS and SM-2
 - **FSRS-4.5** (Free Spaced Repetition Scheduler) models each card's memory as *stability* and *difficulty*, then plans the next review for when your chance of recall drops to your target. Cards scheduled by SM-2 carry over when you switch.
@@ -78,29 +137,12 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 | Command | Does |
 |---|---|
 | `/study` | open the pane |
+| `/study welcome` | the welcome screen: interests and experience |
 | `/study <topic>` | add an interest and write its first cards |
 | `/study learn` | a lesson in the chat |
 | `/study review` · `/study quiz` | open the pane with the keyboard on it |
 | `/study chat` | make cards from this chat now |
 | `/study stats` · `/study tips` | progress / tips as text |
-
-## Install
-
-In Claude Code:
-
-```
-/plugin marketplace add yashverma2110/maxlearn
-/plugin install maxlearn@maxlearn
-```
-
-Or run it from a clone:
-
-```sh
-git clone https://github.com/yashverma2110/maxlearn.git
-claude --plugin-dir ./maxlearn
-```
-
-The pane docks beside the chat in terminals at least 144 columns wide; otherwise run `/study`. Your data lives in Claude Code's plugin store on your machine, so it carries across sessions.
 
 ## What it uses
 
@@ -120,7 +162,7 @@ It reads no files and runs no commands. Nothing leaves your machine except the m
 
 ```sh
 claude plugin validate .
-claude plugin test .     # 62 tests
+claude plugin test .     # 82 tests
 ```
 
 The code is split into pure modules (`srs`, `fsrs`, `analytics`, `usage`, `lessons`, `prompts`, `keymap`, `layout`, `tips`, `auto`, `insight`) and one hooks module (`register.tsx`) that holds everything touching Claude Code's engine.

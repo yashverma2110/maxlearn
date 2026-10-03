@@ -67,6 +67,8 @@ import {
   MAX_DECK,
   MAX_REVIEWS,
   ON_OFF,
+  PROFICIENCIES,
+  SUGGESTED_INTERESTS,
   RETENTIONS,
   TAB_KEYS,
   TITLE,
@@ -353,7 +355,11 @@ export async function fromInterest($: $, topic: string): Promise<number> {
   )
   const recall = t?.recentAccuracy ?? t?.accuracy ?? null
   const reviewsOfTopic = log.filter(r => r.topic === topic).length
-  const level = levelFor(t && { cards: t.cards, mastery: t.mastery, recall, reviews: reviewsOfTopic }, (await readSimpler($))[topic] ?? 0)
+  const level = levelFor(
+    t && { cards: t.cards, mastery: t.mastery, recall, reviews: reviewsOfTopic },
+    (await readSimpler($))[topic] ?? 0,
+    (await read($, settings)).proficiency,
+  )
   const known = cards
     .filter(c => c.topic === topic)
     .slice(-30)
@@ -436,6 +442,7 @@ async function writeLessons($: $, aim?: string[]): Promise<number> {
   const log = await read($, reviews)
   const insights = topicInsights(cards, log, await read($, chatTopics), await read($, interests), now)
   const simpler = await readSimpler($)
+  const { proficiency } = await read($, settings)
   const brief = topics
     .map((topic, n) => {
       const t = insights.find(x => x.topic === topic)
@@ -443,6 +450,7 @@ async function writeLessons($: $, aim?: string[]): Promise<number> {
       const level = levelFor(
         t && { cards: t.cards, mastery: t.mastery, recall, reviews: log.filter(r => r.topic === topic).length },
         simpler[topic] ?? 0,
+        proficiency,
       )
       return `${n + 1}. "${topic}" for ${LEVEL_BRIEF[level]}`
     })
@@ -624,6 +632,73 @@ async function addInterest($: $, raw: string): Promise<string | undefined> {
   await setMode($, 'learn')
   generate($, topic, () => writeLessons($, Array.from({ length: LESSONS_PER_CALL }, () => topic)), false, 'lesson')
   return topic
+}
+
+// ── Onboarding ──
+
+/** Opens the welcome screen at its first step, keeping any picks. */
+async function startWelcome($: $) {
+  await update($, view, (v): View => ({ mode: 'welcome', isRevealed: false, welcomeStep: 'interests', picked: v.picked ?? [] }))
+}
+
+async function togglePick($: $, raw: string) {
+  const topic = normTopic(raw)
+  if (raw.trim() === '' || topic === 'general') return
+  await update($, view, v => {
+    const picked = v.picked ?? []
+    return { ...v, picked: picked.includes(topic) ? picked.filter(t => t !== topic) : [...picked, topic] }
+  })
+}
+
+/** Saves the picks and the level, then writes one lesson call over the first two picks. */
+async function finishWelcome($: $) {
+  const picked = (await read($, view)).picked ?? []
+  await $.store.set('onboarded', true)
+  if (picked.length > 0) {
+    const saved = await update($, interests, list => [...new Set([...list, ...picked])])
+    await $.store.set('interests', saved)
+    for (const topic of picked) await stampAuto($, topic)
+    const aim = picked.length === 1 ? [picked[0]!, picked[0]!] : picked.slice(0, 2)
+    await update($, lessonNow, now => (now === null ? PENDING : now))
+    generate($, aim.join(' + '), () => writeLessons($, aim), false, 'lesson')
+  }
+  await update($, view, () => ({ mode: 'learn', isRevealed: false }))
+}
+
+/** Every stored key but the settings: what Start over clears. */
+const RESET_KEYS = [
+  'deck', 'reviews', 'lessons', 'lessonQueue', 'interests', 'chatTopics', 'chatSessions',
+  'learnTime', 'autoAt', 'simpler', 'milestones', 'onboarded',
+]
+
+/**
+ * Start over: deletes every card, review, lesson, interest and the history,
+ * keeps the settings, and opens onboarding. Work still queued is dropped.
+ */
+async function resetAll($: $) {
+  queue.length = 0
+  for (const key of RESET_KEYS) await $.store.delete(key)
+  await update($, deck, () => [])
+  await update($, reviews, () => [])
+  await update($, lessons, () => [])
+  await update($, lessonQueue, () => [])
+  await update($, lessonNow, () => null)
+  await update($, chatRuns, () => ({}))
+  await update($, interests, () => [])
+  await update($, chatTopics, () => ({}))
+  await update($, chatSessions, () => [])
+  await update($, learnTime, () => ({}))
+  await update($, lastAnswer, () => null)
+  await update($, session, s => ({ reviewed: 0, correct: 0, startedAt: s.startedAt }))
+  insightId = undefined
+  await update($, view, (): View => ({ mode: 'welcome', isRevealed: false, welcomeStep: 'interests', picked: [] }))
+  await showStatus($)
+  $.ui.toast('🧹 Everything deleted. Start again with your interests.')
+}
+
+async function skipWelcome($: $) {
+  await $.store.set('onboarded', true)
+  await update($, view, () => ({ mode: 'learn', isRevealed: false }))
 }
 
 // ── Automatic interest cards ──
@@ -1355,6 +1430,92 @@ function NextSteps($: $, d: Draw, i: Insights) {
   )
 }
 
+/** First run: pick interests, then a level of experience. */
+function WelcomeTab($: $, d: Draw, v: View, s: StudySettings) {
+  const { Box, Text, Button } = d.ui
+  const picked = v.picked ?? []
+  const options = [...SUGGESTED_INTERESTS, ...picked.filter(t => !SUGGESTED_INTERESTS.includes(t))]
+
+  if ((v.welcomeStep ?? 'interests') === 'interests') {
+    return cardFrame(
+      d,
+      'welcome',
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Welcome to maxlearn 👋</Text>
+        <Text dimColor wrap="wrap">
+          Step 1 of 2. Pick the topics you want to get better at. You can change them later.
+        </Text>
+        <Box gap={1} flexWrap="wrap">
+          {options.map(topic => (
+            <Button
+              key={`pick-${topic}`}
+              label={picked.includes(topic) ? `✓ ${topic}` : topic}
+              dimColor={!picked.includes(topic)}
+              onPress={() => togglePick($, topic)}
+            />
+          ))}
+        </Box>
+        {d.ui.Input && (
+          <d.ui.Input
+            key="pick-own"
+            label="+ "
+            placeholder="add your own, e.g. kafka"
+            submitLabel="add"
+            onSubmit={(value: string) => togglePick($, value)}
+          />
+        )}
+        <Text dimColor wrap="wrap">
+          {picked.length === 0 ? 'Nothing picked yet.' : `Picked: ${picked.join(', ')}`}
+        </Text>
+        <Box gap={1}>
+          <Button
+            key="welcome-next"
+            label="Next"
+            variant="primary"
+            autoFocus
+            onPress={() => setView($, { welcomeStep: 'level' })}
+          />
+          <Button key="welcome-skip" label="Skip" onPress={() => skipWelcome($)} />
+        </Box>
+      </Box>,
+    )
+  }
+
+  const hint = PROFICIENCIES.find(p => p.value === s.proficiency)?.hint ?? ''
+  return cardFrame(
+    d,
+    'welcome',
+    <Box flexDirection="column" gap={1}>
+      <Text bold>How would you describe your experience?</Text>
+      <Text dimColor wrap="wrap">
+        Step 2 of 2. Lessons start at this level. Each topic then moves up or down with your recall.
+      </Text>
+      <Box gap={1} flexWrap="wrap">
+        {PROFICIENCIES.map(p => (
+          <Button
+            key={`level-${p.value}`}
+            label={p.value === s.proficiency ? `• ${p.label}` : p.label}
+            dimColor={p.value !== s.proficiency}
+            onPress={() => saveSettings($, { proficiency: p.value })}
+          />
+        ))}
+      </Box>
+      <Text dimColor wrap="wrap">
+        {hint}
+      </Text>
+      <Box gap={1}>
+        <Button key="welcome-start" label="Start learning" variant="primary" autoFocus onPress={() => finishWelcome($)} />
+        <Button key="welcome-back" label="Back" onPress={() => setView($, { welcomeStep: 'interests' })} />
+      </Box>
+      <Text dimColor wrap="wrap">
+        {picked.length === 0
+          ? 'No topics picked: add some later with /study <topic>.'
+          : `Your first 2 lessons cover ${(picked.length === 1 ? [picked[0]] : picked.slice(0, 2)).join(' and ')}.`}
+      </Text>
+    </Box>,
+  )
+}
+
 /** The learn tab: one lesson to read before its cards are tested. */
 function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, waiting: number, busy: Generating | null) {
   const { Box, Text, Button } = d.ui
@@ -1768,7 +1929,7 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
   )
 }
 
-export function SettingsTab($: $, d: Draw, s: StudySettings) {
+export function SettingsTab($: $, d: Draw, s: StudySettings, v: View) {
   const { Box, Text, Button } = d.ui
   // A row of option buttons, not a Select: a focused Select keeps letter keys for
   // itself, so the tab keys (r q p m o) and i j k l would stop working here.
@@ -1821,6 +1982,9 @@ export function SettingsTab($: $, d: Draw, s: StudySettings) {
         'focus-section',
         'Focus',
         <Box flexDirection="column" gap={1}>
+          {picker('proficiency', 'Experience: ', s.proficiency, PROFICIENCIES, value =>
+            saveSettings($, { proficiency: value as StudySettings['proficiency'] }),
+          )}
           {picker('focus', 'Focus: ', s.focus, FOCUS_OPTIONS, value => saveSettings($, { focus: value as Focus }))}
           <Text dimColor wrap="wrap">
             {s.focus === 'work'
@@ -1868,6 +2032,29 @@ export function SettingsTab($: $, d: Draw, s: StudySettings) {
             3 new cards per interest each period, one interest at a time. From chat, at most once every 4h per interest.
           </Text>
         </Box>,
+      )}
+      {section(
+        d,
+        'reset-section',
+        'Start over',
+        v.isConfirmingReset ? (
+          <Box flexDirection="column" gap={1}>
+            <Text color="red" wrap="wrap">
+              This deletes all cards, reviews, lessons, interests and history. It cannot be undone. Your settings stay.
+            </Text>
+            <Box gap={1}>
+              <Button key="reset-confirm" label="Yes, delete everything" onPress={() => resetAll($)} />
+              <Button key="reset-cancel" label="Cancel" variant="primary" autoFocus onPress={() => setView($, { isConfirmingReset: false })} />
+            </Box>
+          </Box>
+        ) : (
+          <Box flexDirection="column" gap={1}>
+            <Button key="reset" label="Delete all cards…" dimColor onPress={() => setView($, { isConfirmingReset: true })} />
+            <Text dimColor wrap="wrap">
+              Clears your cards and history, then shows the welcome screen again.
+            </Text>
+          </Box>
+        ),
       )}
       {section(
         d,
@@ -1995,11 +2182,17 @@ export const register: Register = on => {
     await $.command.register({
       name: 'study',
       description: 'maxlearn: open the flashcard pane, or add an interest to learn',
-      argumentHint: '[topic | learn | review | quiz | chat | stats | tips]',
+      argumentHint: '[topic | welcome | learn | review | quiz | chat | stats | tips]',
     })
     void $.ui.open({ id: PANE, title: TITLE, closeOnEscape: true })
     await startInsights($, (await read($, settings)).insightPace)
     await startAuto($, (await read($, settings)).autoPeriod)
+    // First run: a brand new learner sees the welcome screen; anyone with data is already onboarded.
+    if ((await $.store.get('onboarded')) !== true) {
+      const isNew = (await read($, interests)).length === 0 && (await read($, deck)).length === 0
+      if (isNew) await startWelcome($)
+      else await $.store.set('onboarded', true)
+    }
 
     return next(e)
   })
@@ -2029,6 +2222,12 @@ export const register: Register = on => {
             ? 'maxlearn opened. Press ctrl+x tab to give it the keys.'
             : 'The pane has the keys: s reveals, j l move across the grades, enter or 1-4 grades, h lists every key, esc closes the pane.',
       }
+    }
+
+    if (word === 'welcome' || word === 'onboard' || word === 'start') {
+      await startWelcome($)
+      await $.ui.open({ id: PANE, title: TITLE, closeOnEscape: true })
+      return { text: 'Welcome screen opened: pick your interests and level.' }
     }
 
     if (word === 'learn' || word === 'lesson') {
@@ -2159,7 +2358,9 @@ export const register: Register = on => {
 
     const cards = await read($, deck)
     let body
-    if (v.mode === 'learn') {
+    if (v.mode === 'welcome') {
+      body = WelcomeTab($, d, v, await read($, settings))
+    } else if (v.mode === 'learn') {
       const id = await read($, lessonNow)
       const lesson = id === null || id === PENDING ? undefined : findLesson(id, cards, await read($, lessons))
       if (lesson !== undefined) markShown(lesson.id, await $.clock.now())
@@ -2167,7 +2368,7 @@ export const register: Register = on => {
     } else if (v.mode === 'progress') {
       body = InsightsTab($, d, v, i)
     } else if (v.mode === 'settings') {
-      body = SettingsTab($, d, await read($, settings))
+      body = SettingsTab($, d, await read($, settings), v)
     } else if (v.mode === 'add') {
       body = MoreTab($, d, v, i)
     } else {
@@ -2189,7 +2390,7 @@ export const register: Register = on => {
     // On the study tabs the card sits in the middle: two empty boxes above and
     // below share the free rows, and shrink to nothing when the content is taller.
     const rows = e.props.scroll?.bodyRows ?? 0
-    const isCentered = v.mode === 'learn' || v.mode === 'review' || v.mode === 'quiz'
+    const isCentered = v.mode === 'welcome' || v.mode === 'learn' || v.mode === 'review' || v.mode === 'quiz'
     return (
       <Box flexDirection="column" minHeight={rows} width={d.width}>
         {isCentered && <Box key="space-above" flexGrow={1} />}

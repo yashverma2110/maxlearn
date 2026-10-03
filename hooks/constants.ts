@@ -20,7 +20,7 @@ export const CHAT_CONTEXT_CHARS = 16_000
 /** A topic counts as mastered from here. */
 export const MASTERED = 0.7
 
-export const TAB_KEYS: Record<Mode, string> = { learn: 'e', review: 'r', quiz: 'q', progress: 'p', add: 'm', settings: 'o' }
+export const TAB_KEYS: Record<Mode, string> = { welcome: 'w', learn: 'e', review: 'r', quiz: 'q', progress: 'p', add: 'm', settings: 'o' }
 
 export const CHAT_MODELS: { value: ChatModel; label: string }[] = [
   { value: 'session', label: 'session model (cached)' },
@@ -48,6 +48,7 @@ export const DEFAULT_SETTINGS: StudySettings = {
   chatCards: 'on',
   algorithm: 'sm2',
   retention: '0.9',
+  proficiency: 'senior',
 }
 
 export const INSIGHT_PACES: { value: InsightPace; label: string; ms: number }[] = [
@@ -77,4 +78,25 @@ export const RETENTIONS: { value: Retention; label: string }[] = [
   { value: '0.85', label: '85%' },
   { value: '0.9', label: '90%' },
   { value: '0.95', label: '95%' },
+]
+
+export const PROFICIENCIES: { value: StudySettings['proficiency']; label: string; hint: string }[] = [
+  { value: 'intro', label: 'New to this', hint: 'Every term explained, one step at a time.' },
+  { value: 'mid', label: 'Junior / mid', hint: 'Solid basics; learning how things work inside.' },
+  { value: 'senior', label: 'Senior', hint: 'Internals, trade-offs and production failure modes.' },
+  { value: 'staff', label: 'Staff+', hint: 'System-level trade-offs and second-order effects.' },
+]
+
+/** Interests offered on the welcome screen; any other topic can be typed. */
+export const SUGGESTED_INTERESTS = [
+  'system design',
+  'postgres',
+  'redis',
+  'typescript',
+  'react',
+  'distributed systems',
+  'kubernetes',
+  'security',
+  'testing',
+  'git',
 ]

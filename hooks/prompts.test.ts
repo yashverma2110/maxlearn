@@ -47,3 +47,14 @@ test('the STE rules cover every text field of lessons and cards', async () => {
   expect(STE_RULES).toContain('ASD-STE100')
   expect(STE_RULES).toContain('20 words or fewer')
 })
+
+test('levels start at the chosen experience and move relative to it', async () => {
+  expect(levelFor(undefined, 0, 'intro')).toBe('intro')
+  expect(levelFor(undefined, 0, 'staff')).toBe('staff')
+  const poor = { cards: 6, mastery: 0.2, recall: 0.4, reviews: 8 }
+  const strong = { cards: 6, mastery: 0.8, recall: 0.9, reviews: 12 }
+  expect(levelFor(poor, 0, 'mid')).toBe('intro')
+  expect(levelFor(strong, 0, 'mid')).toBe('senior')
+  expect(levelFor(strong, 0, 'staff')).toBe('staff') // capped
+  expect(levelFor(poor, 3, 'senior')).toBe('intro') // floored
+})

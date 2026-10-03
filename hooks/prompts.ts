@@ -29,20 +29,21 @@ export type LevelSignal = {
 }
 
 /**
- * Starts senior; steps down to mid when recall is poor on enough reviews,
- * up to staff once the topic is mastered and recalled well. Each Simplify on
- * the topic steps one level further down, to intro at the lowest.
+ * Starts at the learner's chosen level (senior unless they picked another);
+ * one step down when recall is poor on enough reviews, one step up once the
+ * topic is mastered and recalled well. Each Simplify steps one further down.
  */
-export function levelFor(s: LevelSignal | undefined, simplified = s?.simplified ?? 0): Level {
-  const base: Level =
+export function levelFor(s: LevelSignal | undefined, simplified = s?.simplified ?? 0, start: Level = 'senior'): Level {
+  const step =
     s === undefined || s.recall === null || s.reviews < 5
-      ? 'senior'
+      ? 0
       : s.recall < 0.6
-        ? 'mid'
+        ? -1
         : s.mastery >= 0.7 && s.recall >= 0.85
-          ? 'staff'
-          : 'senior'
-  return LEVELS[Math.max(0, LEVELS.indexOf(base) - simplified)]!
+          ? 1
+          : 0
+  const at = LEVELS.indexOf(start) + step - simplified
+  return LEVELS[Math.max(0, Math.min(LEVELS.length - 1, at))]!
 }
 
 /** The ask for a simpler version of a lesson the learner found too hard. */

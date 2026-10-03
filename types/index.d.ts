@@ -28,7 +28,7 @@ export type Card = {
   learnedAt?: number
 }
 
-export type Mode = 'learn' | 'review' | 'quiz' | 'progress' | 'add' | 'settings'
+export type Mode = 'welcome' | 'learn' | 'review' | 'quiz' | 'progress' | 'add' | 'settings'
 
 /** `session` forks the session's own model (prompt-cached); the rest are model aliases. */
 export type ChatModel = 'session' | 'opus' | 'sonnet' | 'haiku'
@@ -61,6 +61,8 @@ export type StudySettings = {
   chatCards: 'on' | 'off'
   algorithm: Algorithm
   retention: Retention
+  /** The learner's experience: where every topic's level starts. */
+  proficiency: 'intro' | 'mid' | 'senior' | 'staff'
 }
 
 /** One graded recall, kept for the insights history. */
@@ -131,6 +133,11 @@ export type View = {
   tipIndex?: number
   /** The more tab's sub-view. */
   more?: 'actions' | 'tips'
+  /** Onboarding: which step, and the interests picked so far. */
+  welcomeStep?: 'interests' | 'level'
+  picked?: string[]
+  /** Settings: the reset button was pressed once and waits for a confirm. */
+  isConfirmingReset?: boolean
 }
 
 /** The one grade `u` can take back: the card as it was, and its log entry. */

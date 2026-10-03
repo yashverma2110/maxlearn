@@ -10,8 +10,8 @@ export function density(bodyColumns: number | undefined): Density {
 }
 
 export const TAB_LABELS: Record<Density, Record<Mode, string>> = {
-  roomy: { learn: 'learn', review: 'review', quiz: 'quiz', progress: 'insights', add: 'more', settings: 'settings' },
-  compact: { learn: 'learn', review: 'rev', quiz: 'quiz', progress: 'ins', add: 'more', settings: 'set' },
+  roomy: { welcome: 'welcome', learn: 'learn', review: 'review', quiz: 'quiz', progress: 'insights', add: 'more', settings: 'settings' },
+  compact: { welcome: 'welcome', learn: 'learn', review: 'rev', quiz: 'quiz', progress: 'ins', add: 'more', settings: 'set' },
 }
 
 /** Mastery color: red while weak, yellow while growing, green once held. */
