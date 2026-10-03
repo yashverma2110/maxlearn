@@ -19,6 +19,11 @@ export type Card = {
   /** Proficiency counters. */
   seen: number
   correct: number
+  /** FSRS memory: days until recall falls to 90%, and how hard the card is (1..10). */
+  stability?: number
+  difficulty?: number
+  /** When it was last graded. */
+  lastReviewAt?: number
   /** When its answer was first shown on the learn screen; unset means still to learn. */
   learnedAt?: number
 }
@@ -38,6 +43,12 @@ export type InsightPace = 'off' | '30s' | '2m'
 /** How often each interest gets new cards on its own. */
 export type AutoPeriod = 'off' | '12h' | '24h' | '3d' | '7d'
 
+/** Which scheduler sets the next review. */
+export type Algorithm = 'sm2' | 'fsrs'
+
+/** FSRS: the chance of recall a review is planned at. */
+export type Retention = '0.85' | '0.9' | '0.95'
+
 export type StudySettings = {
   chatModel: ChatModel
   interestModel: InterestModel
@@ -46,6 +57,8 @@ export type StudySettings = {
   autoPeriod: AutoPeriod
   /** Make an interest's cards when the chat touches it. */
   autoOnChat: 'on' | 'off'
+  algorithm: Algorithm
+  retention: Retention
 }
 
 /** One graded recall, kept for the insights history. */
@@ -55,12 +68,24 @@ export type ReviewEvent = {
   topic: string
   grade: Grade
   mode: 'review' | 'quiz'
+  /** How long the card was on screen before the grade, capped. */
+  ms?: number
+}
+
+/** One chat and the time it spent on each topic. */
+export type ChatSession = {
+  id: string
+  label: string
+  startedAt: number
+  lastAt: number
+  /** Chat time per topic, in milliseconds. */
+  topics: Record<string, number>
 }
 
 /** Topic mentions in chat per local day: `{ "2026-10-03": { postgres: 2 } }`. */
 export type ChatTopics = Record<string, Record<string, number>>
 
-export type InsightsView = 'overview' | 'topics' | 'work'
+export type InsightsView = 'overview' | 'topics' | 'work' | 'chats'
 
 /** Cards being written now: what for, and since when. */
 export type Generating = { label: string; startedAt: number; noun?: 'card' | 'lesson' }
@@ -123,6 +148,10 @@ declare module 'claude-code' {
       lessonNow: string | null
       /** Each `/study learn` row by run number: its lesson, or `pending`. */
       chatRuns: Record<string, string>
+      /** Recent chats, newest first, with the topics each touched and for how long. */
+      chatSessions: ChatSession[]
+      /** Time reading lessons, per topic. */
+      learnTime: Record<string, number>
     }
   }
 }

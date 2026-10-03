@@ -1,15 +1,45 @@
-import type { Card, Grade } from '../types'
+import type { Algorithm, Card, Grade } from '../types'
+import { initialMemory, intervalFor, nextMemory, type Memory } from './fsrs'
 import { isWeakFront } from './prompts'
 
 export const DAY = 24 * 60 * 60 * 1000
 const MATURE_DAYS = 21
 
+export type SchedOptions = { algorithm: Algorithm; retention: number }
+export const SM2: SchedOptions = { algorithm: 'sm2', retention: 0.9 }
+
 /**
- * Reschedules `card` after the learner graded their recall.
+ * Reschedules `card` after the learner graded their recall, with SM-2 or FSRS.
  * Returns a new card; never mutates the input. `jitter` scales the interval;
  * left out, it is ±5% so cards made together do not stay due together.
  */
-export function schedule(card: Card, grade: Grade, now: number, jitter = fuzz()): Card {
+export function schedule(card: Card, grade: Grade, now: number, jitter = fuzz(), opts: SchedOptions = SM2): Card {
+  const next = opts.algorithm === 'fsrs' ? scheduleFsrs(card, grade, now, jitter, opts.retention) : scheduleSm2(card, grade, now, jitter)
+  return { ...next, lastReviewAt: now }
+}
+
+/** The card's FSRS memory: its own, else one seeded from its SM-2 interval, else none yet. */
+function memoryOf(card: Card): Memory | undefined {
+  if (card.stability !== undefined && card.difficulty !== undefined) {
+    return { stability: card.stability, difficulty: card.difficulty }
+  }
+  if (card.intervalDays > 0) return { stability: card.intervalDays, difficulty: initialMemory('good').difficulty }
+  return undefined
+}
+
+function scheduleFsrs(card: Card, grade: Grade, now: number, jitter: number, retention: number): Card {
+  const before = memoryOf(card)
+  const last = card.lastReviewAt ?? card.due - card.intervalDays * DAY
+  const m = before === undefined ? initialMemory(grade) : nextMemory(before, grade, (now - last) / DAY)
+  const base = { ...card, stability: m.stability, difficulty: m.difficulty }
+  if (grade === 'again') {
+    return { ...base, reps: 0, lapses: card.lapses + 1, intervalDays: 0, due: now + RELEARN_MS }
+  }
+  const intervalDays = Math.max(1, Math.round(intervalFor(m.stability, retention) * jitter))
+  return { ...base, reps: card.reps + 1, intervalDays, due: now + intervalDays * DAY }
+}
+
+function scheduleSm2(card: Card, grade: Grade, now: number, jitter: number): Card {
   if (grade === 'again') {
     // A lapse: relearn soon, in this session if possible.
     const ease = Math.max(MIN_EASE, card.ease - 0.2)
@@ -33,9 +63,9 @@ function fuzz(): number {
   return 0.95 + Math.random() * 0.1
 }
 
-/** How long until `card` comes back if graded `grade` now: the schedule without its jitter. */
-export function previewInterval(card: Card, grade: Grade): number {
-  return schedule(card, grade, 0, 1).due
+/** How long until `card` comes back if graded `grade` at `now`: the schedule without its jitter. */
+export function previewInterval(card: Card, grade: Grade, now = 0, opts: SchedOptions = SM2): number {
+  return schedule(card, grade, now, 1, opts).due - now
 }
 
 /** `10m`, `3h`, `4d`, `2mo`: a short wait for a button label. */
@@ -78,12 +108,14 @@ export function normTopic(topic: string): string {
 }
 
 /** Records a recall attempt for the proficiency counters, then reschedules. */
-export function grade(card: Card, g: Grade, now: number): Card {
+export function grade(card: Card, g: Grade, now: number, opts: SchedOptions = SM2): Card {
   const isCorrect = g !== 'again'
   return schedule(
     { ...card, seen: card.seen + 1, correct: card.correct + (isCorrect ? 1 : 0) },
     g,
     now,
+    undefined,
+    opts,
   )
 }
 

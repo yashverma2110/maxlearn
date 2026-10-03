@@ -3,8 +3,10 @@ import type { EngineInterface, Register, RenderSurface, Timer } from 'claude-cod
 
 import type {
   AutoPeriod,
+  Algorithm,
   Card,
   ChatModel,
+  ChatSession,
   ChatTopics,
   Focus,
   Generating,
@@ -12,6 +14,7 @@ import type {
   InsightPace,
   InterestModel,
   LastAnswer,
+  Retention,
   Lesson,
   Mode,
   ReviewEvent,
@@ -51,6 +54,7 @@ import {
 } from './keymap'
 import { TAB_LABELS, bar, density, masteryColor, pct, type Density } from './layout'
 import {
+  ALGORITHMS,
   AUTO_PERIODS,
   CHAT_CONTEXT_CHARS,
   CHAT_EVERY_TURNS,
@@ -63,12 +67,14 @@ import {
   MAX_DECK,
   MAX_REVIEWS,
   ON_OFF,
+  RETENTIONS,
   TAB_KEYS,
   TITLE,
 } from './constants'
-import { dueCards, grade, isToLearn, normTopic, parseCards, parseChatReply, previewInterval, shortWait, topicStats } from './srs'
+import { dueCards, grade, isToLearn, normTopic, parseCards, parseChatReply, previewInterval, shortWait, topicStats, type SchedOptions } from './srs'
 import { AUTO_CHECK_MS, chatMatches, periodDue, seedAutoAt, type AutoAt } from './auto'
 import { pickInsight, statusLine } from './insight'
+import { attributeChat, chatLabel, duration, studyMs, topicUsage } from './usage'
 import {
   LESSONS_PER_CALL,
   cardLesson,
@@ -108,6 +114,8 @@ const lessons = atom({ plugin: 'maxlearn', key: 'lessons' } as const, [] as Less
 const lessonQueue = atom({ plugin: 'maxlearn', key: 'lessonQueue' } as const, [] as string[])
 const lessonNow = atom({ plugin: 'maxlearn', key: 'lessonNow' } as const, null as string | null)
 const chatRuns = atom({ plugin: 'maxlearn', key: 'chatRuns' } as const, {} as Record<string, string>)
+const chatSessions = atom({ plugin: 'maxlearn', key: 'chatSessions' } as const, [] as ChatSession[])
+const learnTime = atom({ plugin: 'maxlearn', key: 'learnTime' } as const, {} as Record<string, number>)
 const session = atom({ plugin: 'maxlearn', key: 'session' } as const, {
   reviewed: 0,
   correct: 0,
@@ -227,12 +235,44 @@ async function addCards($: $, text: string, source: Card['source']): Promise<num
 }
 
 /** Records the topics the chat touched today, then adds its cards. */
+// ── Where time goes ──
+// Chat time since the last topic check, and when each card or lesson came on
+// screen. Module state: a reload starts both over, losing at most a few turns.
+let pendingChatMs = 0
+const shownAt = new Map<string, number>()
+
+/** Files the chat time since the last check under this chat, split over the topics it touched. */
+async function recordChatTime($: $, topics: string[]) {
+  if (topics.length === 0 || pendingChatMs === 0) return
+  const id = await $.session.id()
+  const first = (await $.session.messages()).find(m => m.role === 'user')?.text
+  const folder = (await $.session.cwd()).split('/').pop() ?? 'chat'
+  const now = await $.clock.now()
+  const ms = pendingChatMs
+  pendingChatMs = 0
+  const next = await update($, chatSessions, list => attributeChat(list, id, chatLabel(first, folder), topics, ms, now))
+  await $.store.set('chatSessions', next)
+}
+
+/** Notes when `id` came on screen, once; the grade or Next measures from here. */
+function markShown(id: string, now: number) {
+  if (!shownAt.has(id)) shownAt.set(id, now)
+}
+
+/** How long `id` was on screen, and forgets it. */
+function takeShown(id: string, now: number): number {
+  const ms = studyMs(shownAt.get(id), now)
+  shownAt.delete(id)
+  return ms
+}
+
 async function addChatReply($: $, text: string): Promise<number> {
   const now = await $.clock.now()
   const { topics, cards } = parseChatReply(text, await read($, deck), now)
   if (topics.length > 0) {
     const next = await update($, chatTopics, chat => recordChatTopics(chat, topics, now))
     await $.store.set('chatTopics', next)
+    await recordChatTime($, topics)
     await onChatTopics($, topics)
   }
   if (cards.length > 0) await saveDeck($, existing => [...existing, ...cards])
@@ -461,6 +501,11 @@ async function markLearned($: $, id: string | null | undefined) {
   if (lesson === undefined) return
   const now = await $.clock.now()
   await saveDeck($, cards => learn(lesson, cards, now))
+  const ms = takeShown(id, now)
+  if (ms > 0) {
+    const next = await update($, learnTime, t => ({ ...t, [lesson.topic]: (t[lesson.topic] ?? 0) + ms }))
+    await $.store.set('learnTime', next)
+  }
 }
 
 /** The learn tab's Next (`isLearned`) or skip: learn the one shown only on Next, then show the next (writing two when none waits). */
@@ -541,6 +586,9 @@ export async function readInsights($: $) {
     strong: strong(topics),
     interests: interestRank(topics),
     work: workTopics(topics),
+    settings: await read($, settings),
+    chats: await read($, chatSessions),
+    usage: topicUsage(await read($, chatSessions), log, await read($, learnTime)),
   }
 }
 
@@ -577,6 +625,13 @@ export async function statsText($: $): Promise<string> {
       i.work.map(w => ({ topic: w.topic, reason: `${w.chatDays7}d · ${w.cards} cards${w.isThin ? ' · thin' : ''}` })),
     ),
     ...list('Interests', i.interests),
+    ...list(
+      'Time spent (chat · review · learn)',
+      i.usage.slice(0, 8).map(u => ({
+        topic: u.topic,
+        reason: `${duration(u.chatMs)} in ${u.chats} chat${u.chats === 1 ? '' : 's'} · ${duration(u.reviewMs)} · ${duration(u.learnMs)}`,
+      })),
+    ),
   ].join('\n')
 }
 
@@ -719,7 +774,8 @@ export async function answer($: $, card: Card, g: Grade, feedback?: string) {
   const before = cardsBefore.find(c => c.id === card.id) ?? card
   const masteryBefore = topicStats(cardsBefore, now).find(s => s.topic === card.topic)?.mastery ?? 0
 
-  const cards = await saveDeck($, list => list.map(c => (c.id === card.id ? grade(c, g, now) : c)))
+  const opts = schedOptions(await read($, settings))
+  const cards = await saveDeck($, list => list.map(c => (c.id === card.id ? grade(c, g, now, opts) : c)))
   await update($, lastAnswer, () => ({ before, t: now }))
   const event: ReviewEvent = {
     t: now,
@@ -727,6 +783,7 @@ export async function answer($: $, card: Card, g: Grade, feedback?: string) {
     topic: card.topic,
     grade: g,
     mode: feedback === undefined ? 'review' : 'quiz',
+    ms: takeShown(card.id, now),
   }
   const log = await update($, reviews, list => [...list, event].slice(-MAX_REVIEWS))
   await $.store.set('reviews', log)
@@ -861,7 +918,7 @@ function cardFrame(d: Draw, key: string, children: unknown) {
 }
 
 /** The card and its main actions; every key binding lives in the footer. */
-function ReviewCard($: $, d: Draw, card: Card, v: View) {
+function ReviewCard($: $, d: Draw, card: Card, v: View, now: number, opts: SchedOptions) {
   const { Box, Text, Button } = d.ui
   return cardFrame(
     d,
@@ -878,7 +935,7 @@ function ReviewCard($: $, d: Draw, card: Card, v: View) {
           <Text wrap="wrap">{card.back}</Text>
           <Box gap={1} flexWrap="wrap">
             {GRADES.map(([g, key]) => {
-              const wait = shortWait(previewInterval(card, g))
+              const wait = shortWait(previewInterval(card, g, now, opts))
               return (
                 <Button
                   key={`grade-${g}`}
@@ -941,6 +998,11 @@ function QuizCard($: $, d: Draw, card: Card, v: View) {
       )}
     </Box>,
   )
+}
+
+/** The scheduler the settings ask for. */
+function schedOptions(s: StudySettings): SchedOptions {
+  return { algorithm: s.algorithm, retention: Number(s.retention) }
 }
 
 async function closePane($: $) {
@@ -1186,7 +1248,7 @@ export function StudyTab($: $, d: Draw, v: View, card: Card | undefined, i: Insi
   if (card !== undefined) {
     return (
       <Box flexDirection="column" gap={1}>
-        {v.mode === 'quiz' ? QuizCard($, d, card, v) : ReviewCard($, d, card, v)}
+        {v.mode === 'quiz' ? QuizCard($, d, card, v) : ReviewCard($, d, card, v, i.now, schedOptions(i.settings))}
         {isRoomy(d) && TipLine($, d, v, i)}
       </Box>
     )
@@ -1336,7 +1398,7 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
   const sub = v.insights ?? 'overview'
   const tabs = (
     <Box gap={1} flexWrap="wrap">
-      {subTabs($, d, 'ins', ['overview', 'topics', 'work'], sub, name => ({ insights: name }))}
+      {subTabs($, d, 'ins', ['overview', 'topics', 'work', 'chats'], sub, name => ({ insights: name }))}
       <Button key="ins-focus" label={`focus: ${focusLabel(i.focus)}`} plain dimColor onPress={() => setMode($, 'settings')} />
     </Box>
   )
@@ -1410,8 +1472,58 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
             ))
           ),
         )}
+        {section(
+          d,
+          'time',
+          'Time spent',
+          i.usage.length === 0 ? (
+            <Text dimColor wrap="wrap">
+              Time shows up after a few chat turns or reviews.
+            </Text>
+          ) : (
+            i.usage.slice(0, 8).map(u => (
+              <Box key={`time-${u.topic}`} flexDirection="column">
+                <Text bold wrap="truncate-end">
+                  {u.topic} <Text dimColor>{duration(u.chatMs + u.reviewMs + u.learnMs)}</Text>
+                </Text>
+                <Text dimColor wrap="truncate-end">
+                  chat {duration(u.chatMs)} ({u.chats}) · review {duration(u.reviewMs)} · learn {duration(u.learnMs)}
+                </Text>
+              </Box>
+            ))
+          ),
+        )}
       </Box>
     )
+  } else if (sub === 'chats') {
+    content =
+      i.chats.length === 0 ? (
+        <Text dimColor wrap="wrap">
+          Chats show up here once a few turns have topics.
+        </Text>
+      ) : (
+        section(
+          d,
+          'chats',
+          'Recent chats',
+          <Box flexDirection="column" gap={1}>
+            {i.chats.slice(0, 10).map(c => {
+              const topics = Object.entries(c.topics).sort(([, a], [, b]) => b - a)
+              const total = topics.reduce((n, [, ms]) => n + ms, 0)
+              return (
+                <Box key={`chat-${c.id}`} flexDirection="column">
+                  <Text wrap="truncate-end">
+                    <Text bold>{c.label}</Text> <Text dimColor>{duration(total)}</Text>
+                  </Text>
+                  <Text dimColor wrap="wrap">
+                    {topics.map(([t, ms]) => `${t} ${duration(ms)}`).join(' · ')}
+                  </Text>
+                </Box>
+              )
+            })}
+          </Box>,
+        )
+      )
   } else {
     content =
       i.work.length === 0 ? (
@@ -1527,6 +1639,25 @@ export function SettingsTab($: $, d: Draw, s: StudySettings) {
       )}
       {section(
         d,
+        'scheduler-section',
+        'Scheduler',
+        <Box flexDirection="column" gap={1}>
+          {picker('algorithm', 'Algorithm: ', s.algorithm, ALGORITHMS, value =>
+            saveSettings($, { algorithm: value as Algorithm }),
+          )}
+          {s.algorithm === 'fsrs' &&
+            picker('retention', 'Target recall: ', s.retention, RETENTIONS, value =>
+              saveSettings($, { retention: value as Retention }),
+            )}
+          <Text dimColor wrap="wrap">
+            {s.algorithm === 'fsrs'
+              ? 'FSRS models each card\'s memory and plans the review for when recall drops to your target. Higher targets mean more reviews.'
+              : 'SM-2: the classic rule. Each good grade multiplies the interval by the card\'s ease.'}
+          </Text>
+        </Box>,
+      )}
+      {section(
+        d,
         'auto-section',
         'Auto cards',
         <Box flexDirection="column" gap={1}>
@@ -1632,6 +1763,10 @@ export const register: Register = on => {
     await update($, interests, () => [...new Set(savedInterests.map(normTopic))])
     const savedReviews = ((await $.store.get('reviews')) as ReviewEvent[] | undefined) ?? []
     await update($, reviews, () => savedReviews)
+    const savedChats = ((await $.store.get('chatSessions')) as ChatSession[] | undefined) ?? []
+    await update($, chatSessions, () => savedChats)
+    const savedLearnTime = ((await $.store.get('learnTime')) as Record<string, number> | undefined) ?? {}
+    await update($, learnTime, () => savedLearnTime)
     const savedLessons = ((await $.store.get('lessons')) as Lesson[] | undefined) ?? []
     await update($, lessons, () => savedLessons)
     const savedQueue = ((await $.store.get('lessonQueue')) as string[] | undefined) ?? []
@@ -1741,6 +1876,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined && !e.isAborted) {
+      pendingChatMs += e.durationMs
       turns += 1
       if (turns % CHAT_EVERY_TURNS === 0) generate($, 'this chat', () => fromChat($))
     }
@@ -1769,6 +1905,7 @@ export const register: Register = on => {
         </Box>
       )
     }
+    markShown(lesson.id, await $.clock.now())
     const isCard = lesson.cards.length === 0
     return (
       <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
@@ -1812,6 +1949,7 @@ export const register: Register = on => {
     if (v.mode === 'learn') {
       const id = await read($, lessonNow)
       const lesson = id === null || id === PENDING ? undefined : findLesson(id, cards, await read($, lessons))
+      if (lesson !== undefined) markShown(lesson.id, await $.clock.now())
       body = LearnTab($, d, id, lesson, (await read($, lessonQueue)).length, await read($, generating))
     } else if (v.mode === 'progress') {
       body = InsightsTab($, d, v, i)
@@ -1820,6 +1958,7 @@ export const register: Register = on => {
     } else if (v.mode === 'add') {
       body = MoreTab($, d, v, i)
     } else {
+      if (card !== undefined) markShown(card.id, await $.clock.now())
       body = StudyTab($, d, v, card, i, cards, await read($, session))
     }
 

@@ -1,4 +1,6 @@
 import type {
+  Algorithm,
+  Retention,
   AutoPeriod,
   ChatModel,
   Focus,
@@ -43,6 +45,8 @@ export const DEFAULT_SETTINGS: StudySettings = {
   insightPace: '30s',
   autoPeriod: '24h',
   autoOnChat: 'on',
+  algorithm: 'sm2',
+  retention: '0.9',
 }
 
 export const INSIGHT_PACES: { value: InsightPace; label: string; ms: number }[] = [
@@ -62,4 +66,14 @@ export const AUTO_PERIODS: { value: AutoPeriod; label: string; ms: number }[] = 
 export const ON_OFF: { value: 'on' | 'off'; label: string }[] = [
   { value: 'on', label: 'on' },
   { value: 'off', label: 'off' },
+]
+
+export const ALGORITHMS: { value: Algorithm; label: string }[] = [
+  { value: 'sm2', label: 'SM-2' },
+  { value: 'fsrs', label: 'FSRS' },
+]
+export const RETENTIONS: { value: Retention; label: string }[] = [
+  { value: '0.85', label: '85%' },
+  { value: '0.9', label: '90%' },
+  { value: '0.95', label: '95%' },
 ]
