@@ -1,0 +1,6 @@
+{
+  "name": "maxlearn",
+  "version": "0.1.0",
+  "description": "Sidebar companion: flashcards and quizzes from your chat and interests, scheduled with spaced repetition",
+  "types": "./types/index.d.ts"
+}
