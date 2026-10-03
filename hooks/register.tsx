@@ -1412,36 +1412,54 @@ function schedOptions(s: StudySettings): SchedOptions {
 }
 
 /** The global tabs, at the top of the pane: the active one bright, the rest dim. */
+/**
+ * The global tabs, at the top of the pane. Off the terminal they are real
+ * buttons and the active one is filled (primary), so it reads at a glance; the
+ * terminal keeps plain words, the active one bright.
+ */
 function TopBar($: $, d: Draw, v: View) {
   const { Box, Button } = d.ui
+  const isTerminal = d.surface === 'terminal'
   return (
     <Box key="top-bar" gap={1} flexWrap="wrap">
-      {TAB_ORDER.map((mode: Mode) => (
-        <Button
-          key={`tab-${mode}`}
-          label={TAB_LABELS[d.density][mode]}
-          hotkey={TAB_KEYS[mode]}
-          plain
-          dimColor={mode !== v.mode}
-          onPress={() => setMode($, mode)}
-        />
-      ))}
+      {TAB_ORDER.map((mode: Mode) =>
+        isTerminal ? (
+          <Button
+            key={`tab-${mode}`}
+            label={TAB_LABELS[d.density][mode]}
+            hotkey={TAB_KEYS[mode]}
+            plain
+            dimColor={mode !== v.mode}
+            onPress={() => setMode($, mode)}
+          />
+        ) : (
+          <Button
+            key={`tab-${mode}`}
+            label={TAB_LABELS[d.density][mode]}
+            hotkey={TAB_KEYS[mode]}
+            variant={mode === v.mode ? 'primary' : 'secondary'}
+            dimColor={mode !== v.mode}
+            onPress={() => setMode($, mode)}
+          />
+        ),
+      )}
     </Box>
   )
 }
 
-const FROM_LABELS: Record<LearnFrom, string> = { all: 'all', interests: 'from interests', chats: 'from chats' }
+const FROM_LABELS: Record<LearnFrom, string> = { all: 'All', interests: 'Interests', chats: 'Chats' }
 
-/** Learn, review and quiz: which source to show, with how many are waiting under each. */
+/** Learn, review and quiz: which source to show, labelled, with how many are waiting under each. */
 function FilterRow($: $, d: Draw, v: View, counts: Record<LearnFrom, number>) {
-  const { Box, Button } = d.ui
+  const { Box, Button, Text } = d.ui
   const current = v.from ?? 'all'
   return (
-    <Box key="from-row" gap={2} flexWrap="wrap">
+    <Box key="from-row" gap={2} flexWrap="wrap" alignItems="center">
+      <Text dimColor>Show</Text>
       {(['all', 'interests', 'chats'] as const).map(from => (
         <Button
           key={`from-${from}`}
-          label={counts[from] > 0 ? `${FROM_LABELS[from]} ${counts[from]}` : FROM_LABELS[from]}
+          label={counts[from] > 0 ? `${FROM_LABELS[from]} · ${counts[from]}` : FROM_LABELS[from]}
           plain
           dimColor={from !== current}
           onPress={() => setFrom($, from)}
@@ -1579,7 +1597,7 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
     // Desktop, VS Code, mobile: draw keycaps for hotkeys in a proportional font, so a
     // drawn rule wraps and spaces do not align. One framed block, four short rows.
     return (
-      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={2} paddingY={1} gap={1} marginTop={1}>
         <Box justifyContent="space-between">
           <Text dimColor bold>
             Shortcuts
@@ -1587,9 +1605,9 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
           <Text dimColor>{status}</Text>
         </Box>
         {hint}
-        <Box gap={2} flexWrap="wrap">
+        <Box gap={3} flexWrap="wrap" rowGap={1}>
           {arrows}
-          <Box gap={1} flexWrap="wrap">
+          <Box gap={2} flexWrap="wrap">
             {actions}
           </Box>
         </Box>
@@ -2761,7 +2779,7 @@ export const register: Register = on => {
     }
     return (
       <Box flexDirection="column" minHeight={rows} width={d.width}>
-        <Box key="top" flexDirection="column" flexShrink={0}>
+        <Box key="top" flexDirection="column" flexShrink={0} gap={1}>
           {TopBar($, d, v)}
           {hasFilter && FilterRow($, d, v, counts)}
         </Box>

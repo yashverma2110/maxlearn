@@ -43,6 +43,7 @@ These cost real time to discover. Break one and `claude plugin validate` fails o
 ## Hard-won UI facts
 
 - **Arrow keys and Space never reach the pane.** The user's keybindings (Chat context: up/down = history, space = push-to-talk) take them first. So keys are letters: `i j k l` move like ↑ ← ↓ →, `enter` presses, `s` reveals, `1–4` grade, `t` teach me, `z` simplify, `w` explain the selected word, `n` skip, `u` undo, `d` drop, `h` help, `x` close, tabs `e r q p m o`. Arrows and Space reach only the ⌨ Client strip, and only after a mouse click.
+- **Tabs off the terminal are real buttons; the active one is `variant="primary"` (filled).** The terminal keeps plain words. The source filter is labelled `Show` with short words (All · Interests · Chats).
 - **Selected = bright, unselected = dim.** No `•` or other markers on tabs, sub-tabs or option buttons; the footer's key helper draws dim by default, so tabs pass `dimColor: mode !== v.mode`.
 - **Module state the UI shows needs `$.ui.invalidate('ui.render')`** when it changes (the generation `queue`); `$.state` changes redraw on their own.
 - **Every press that starts generation shows it in the pane at once** (spinner text, `⟳` on the chip, "Queued next"), not only on the status line.
@@ -77,7 +78,7 @@ A new setting needs: the type in `StudySettings`, a default in `DEFAULT_SETTINGS
 claude --plugin-dir ~/projects/maxlearn      # load and watch this folder for a session
 claude plugin validate .claude-plugin/plugin.json --strict   # plugin + hooks
 claude plugin validate . --strict            # with marketplace.json present, checks the marketplace
-claude plugin test .                         # all *.test.ts (101 at 0.5.0)
+claude plugin test .                         # all *.test.ts (103 at 0.5.1)
 tsc -p .                                     # once the plugin has loaded once (it writes .claude-plugin/types/)
 ```
 

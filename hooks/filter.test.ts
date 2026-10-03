@@ -61,8 +61,8 @@ test('fromMatches: all shows both; each filter shows its own', async () => {
 test('tabs sit on top; learn filters by source and counts each', async ($, on) => {
   const { ui } = await start($, on, { deck: [card('a', 'interest'), card('b', 'chat')] })
   await ui.press({ key: 'tab-learn' })
-  expect((await ui.find({ key: 'from-chats' }))?.props.label).toBe('from chats 1')
-  expect((await ui.find({ key: 'from-interests' }))?.props.label).toBe('from interests 1')
+  expect((await ui.find({ key: 'from-chats' }))?.props.label).toBe('Chats · 1')
+  expect((await ui.find({ key: 'from-interests' }))?.props.label).toBe('Interests · 1')
   expect((await ui.find({ key: 'from-all' }))?.props.dimColor).toBe(false)
 
   await ui.press({ key: 'from-chats' })
@@ -78,7 +78,7 @@ test('review and quiz follow the same filter', async ($, on) => {
   const learned = { learnedAt: 0, reps: 1 }
   const { ui } = await start($, on, { deck: [card('a', 'interest', learned), card('b', 'chat', learned)] })
   await ui.press({ key: 'tab-review' })
-  expect((await ui.find({ key: 'from-chats' }))?.props.label).toBe('from chats 1')
+  expect((await ui.find({ key: 'from-chats' }))?.props.label).toBe('Chats · 1')
   await ui.press({ key: 'from-chats' })
   await ui.press({ key: 'reveal' })
   expect(await ui.find({ text: /Because b\./ })).toBeDefined()
@@ -110,4 +110,29 @@ test('lessons written from chats are tagged chat, and so are their cards', async
   await ui.press({ key: 'from-interests' })
   expect(await ui.find({ text: /Effects run after paint|Keys keep state/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('off the terminal the active tab is a filled button; the terminal keeps plain words', async ($, on) => {
+  const { ui } = await start($, on, { deck: [card('a', 'interest')] })
+  await ui.unmount()
+  const desk = await $.ui.mount({ plugin: 'maxlearn', surface: 'desktop', ...PANE })
+  await desk.press({ key: 'tab-review' })
+  expect((await desk.find({ key: 'tab-review' }))?.props.variant).toBe('primary')
+  expect((await desk.find({ key: 'tab-learn' }))?.props.variant).toBe('secondary')
+  expect((await desk.find({ key: 'tab-learn' }))?.props.plain).toBeUndefined()
+  expect(await desk.find({ text: /^Show$/ })).toBeDefined()
+  await desk.unmount()
+  const term = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  expect((await term.find({ key: 'tab-review' }))?.props.plain).toBe(true)
+  await term.unmount()
+})
+
+test('the desktop footer has room: padding, a gap between its rows, space above it', async ($, on) => {
+  const { ui } = await start($, on, { deck: [card('a', 'interest')] })
+  await ui.unmount()
+  const desk = await $.ui.mount({ plugin: 'maxlearn', surface: 'desktop', ...PANE })
+  type El = { props: Record<string, unknown>; children: El[] }
+  const footer = ((await desk.drawn()) as El).children.filter(Boolean).at(-1)!
+  expect(footer.props).toMatchObject({ borderStyle: 'round', paddingY: 1, gap: 1, marginTop: 1 })
+  await desk.unmount()
 })

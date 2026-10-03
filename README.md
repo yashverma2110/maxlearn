@@ -195,7 +195,7 @@ It reads no files and runs no commands. Nothing leaves your machine except the m
 
 ```sh
 claude plugin validate .
-claude plugin test .     # 101 tests
+claude plugin test .     # 103 tests
 ```
 
 The code is split into pure modules (`srs`, `fsrs`, `analytics`, `usage`, `lessons`, `prompts`, `keymap`, `layout`, `tips`, `auto`, `insight`) and one hooks module (`register.tsx`) that holds everything touching Claude Code's engine.
