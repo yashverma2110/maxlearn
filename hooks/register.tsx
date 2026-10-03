@@ -73,6 +73,7 @@ import {
 } from './constants'
 import { dueCards, grade, isToLearn, normTopic, parseCards, parseChatReply, previewInterval, shortWait, topicStats, type SchedOptions } from './srs'
 import { AUTO_CHECK_MS, chatMatches, periodDue, seedAutoAt, type AutoAt } from './auto'
+import { gateDigest, gatePrompt, parseGate } from './gate'
 import { pickInsight, statusLine } from './insight'
 import { attributeChat, chatLabel, duration, studyMs, topicUsage } from './usage'
 import {
@@ -258,24 +259,53 @@ function takeShown(id: string, now: number): number {
   return ms
 }
 
+/** Files the topics the chat touched: today's counts, this chat's time, and interests to top up. */
+async function recordTopics($: $, topics: string[]) {
+  if (topics.length === 0) return
+  const now = await $.clock.now()
+  const next = await update($, chatTopics, chat => recordChatTopics(chat, topics, now))
+  await $.store.set('chatTopics', next)
+  await recordChatTime($, topics)
+  await onChatTopics($, topics)
+}
+
 async function addChatReply($: $, text: string): Promise<number> {
   const now = await $.clock.now()
   const { topics, cards } = parseChatReply(text, await read($, deck), now)
-  if (topics.length > 0) {
-    const next = await update($, chatTopics, chat => recordChatTopics(chat, topics, now))
-    await $.store.set('chatTopics', next)
-    await recordChatTime($, topics)
-    await onChatTopics($, topics)
-  }
+  await recordTopics($, topics)
   if (cards.length > 0) await saveDeck($, existing => [...existing, ...cards])
   return cards.length
+}
+
+// Rows the gate has already read: the next check reads only what came after.
+// Module state: a reload reads the recent chat once more, newest kept.
+let gatedRows = 0
+
+/**
+ * The automatic chat check: the learning gate first (one cheap call over the
+ * turns since the last check); execution-only work files its topics and stops.
+ */
+async function autoChatCheck($: $): Promise<number> {
+  const rows = await $.session.messages()
+  const fresh = rows.slice(Math.min(gatedRows, rows.length))
+  gatedRows = rows.length
+  const digest = gateDigest(fresh)
+  if (digest === '') return 0
+  const reply = await $.model.complete({ model: 'haiku', effort: 'low', maxTokens: 200, timeoutMs: 30_000, prompt: gatePrompt(digest) })
+  const verdict = reply.isAnswered ? parseGate(reply.text) : undefined
+  // An unreadable verdict fails open: the card writer has its own rule against execution-only work.
+  if (verdict?.kind === 'execution') {
+    await recordTopics($, verdict.topics)
+    return 0
+  }
+  return fromChat($)
 }
 
 export async function fromChat($: $): Promise<number> {
   const cards = await read($, deck)
   const known = cards.slice(-40).map(c => `- ${c.front}`).join('\n')
   const { chatModel } = await read($, settings)
-  const ask = `[maxlearn] Step outside the task for a moment. Name the engineering topics the recent work in this conversation touched. Then, from its engineering or design concepts, pick at most 2 that a software engineer would benefit from remembering long-term: principles, patterns, trade-offs, language or API semantics. Skip anything specific to this one codebase; give "cards": [] if nothing qualifies.
+  const ask = `[maxlearn] Step outside the task for a moment. Name the engineering topics the recent work in this conversation touched. Then, from its engineering or design concepts, pick at most 2 that a software engineer would benefit from remembering long-term: principles, patterns, trade-offs, language or API semantics. Skip anything specific to this one codebase. If the recent work only executed tasks (ran commands, renamed or moved files, edited config, committed, formatted) and explained no reusable idea, give "cards": []. Give "cards": [] if nothing qualifies.
 ${topicHint(cards, await read($, interests))}
 Do not repeat these existing cards:
 ${known || '(none)'}
@@ -2053,7 +2083,9 @@ export const register: Register = on => {
     if (e.agentId === undefined && !e.isAborted) {
       pendingChatMs += e.durationMs
       turns += 1
-      if (turns % CHAT_EVERY_TURNS === 0 && (await read($, settings)).chatCards !== 'off') generate($, 'this chat', () => fromChat($))
+      if (turns % CHAT_EVERY_TURNS === 0 && (await read($, settings)).chatCards !== 'off') {
+        generate($, 'this chat', () => autoChatCheck($), true)
+      }
     }
     return result
   })

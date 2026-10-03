@@ -14,6 +14,7 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 
 ### Teaching from your chats
 - Every few turns, maxlearn reads the conversation and names the engineering topics it touched. Ideas worth keeping long-term become cards; anything specific to one codebase is skipped.
+- **Learning gate:** a cheap check first asks whether those turns explained anything reusable. Turns that only executed tasks (running commands, renaming, committing, formatting) still count toward your topics and time, but make no cards.
 - `/study chat` does this right away.
 
 ### Teaching from your interests
@@ -107,7 +108,7 @@ maxlearn runs with the same access as Claude Code, like every mod. Here is what 
 
 | It uses | When | Turn it off |
 |---|---|---|
-| **Model calls on your account** | A short fork of the chat every 3 turns to find topics and cards (prompt-cached by default) | settings → Auto cards → Cards from chat → off |
+| **Model calls on your account** | Every 3 turns, one small Haiku call (the learning gate) reads only the new turns; if they taught something, a fork of the chat writes cards (prompt-cached by default) | settings → Auto cards → Cards from chat → off |
 | | 2 lessons per call when you press **Next** with nothing queued, and per **Simplify** | only on your press |
 | | 3 cards per interest each period (default 24h), and when a chat touches an interest (at most every 4h) | settings → Auto cards → period off, chat touch off |
 | **Your chat transcript** | Read to name topics and write cards; sent nowhere except the model calls above | settings → Auto cards → Cards from chat → off |
