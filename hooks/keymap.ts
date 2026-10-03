@@ -121,7 +121,7 @@ export function arrowLines(map: ArrowMap): [string, string] {
  * pane's focus ring (Enter presses); space needs the ⌨ strip clicked.
  */
 export function keyHint(ctx: KeyContext): string {
-  if (ctx.mode === 'learn') return 'enter: next, adds it to review · n skip'
+  if (ctx.mode === 'learn') return 'enter: next, adds it to review'
   if (ctx.mode !== 'review' && ctx.mode !== 'quiz') return 'enter selects · esc closes'
   if (!ctx.hasCard) return 'enter selects · esc closes'
   if (ctx.mode === 'review') return ctx.isRevealed ? 'enter grades · 1 again 2 hard 3 good 4 easy' : 's or enter reveals the answer'

@@ -212,3 +212,23 @@ test('the line under the prompt spins with the topic while cards are written', a
   expect(await ui.find({ text: /⟳/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('off the terminal the footer is one framed block: no drawn rule, status beside the title', async ($, on) => {
+  await start($, on, { deck: [card({ learnedAt: 0 })] })
+  const desk = await $.ui.mount({ plugin: 'maxlearn', surface: 'desktop', ...pane(60) })
+  type El = { type: string; props: Record<string, unknown>; children: El[] }
+  const root = (await desk.drawn()) as El
+  const footer = root.children.filter(Boolean).at(-1)!
+  expect(footer.props.borderStyle).toBe('round')
+  const tree = JSON.stringify(footer)
+  expect(tree).not.toContain('──')
+  const title = footer.children[0]!
+  expect(JSON.stringify(title)).toContain('Shortcuts')
+  expect(JSON.stringify(title)).toMatch(/\d+ due/)
+  expect((await desk.find({ key: 'tab-review' }))?.props.hotkey).toBe('r')
+  await desk.unmount()
+
+  const term = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...pane(60) })
+  expect(await term.find({ text: /── Shortcuts ──/ })).toBeDefined()
+  await term.unmount()
+})

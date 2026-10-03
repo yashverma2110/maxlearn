@@ -86,7 +86,7 @@ import {
   nextCardToLearn,
   parseLessons,
 } from './lessons'
-import { CARD_RUBRIC, LEVEL_BRIEF, levelFor, simplifyPrompt } from './prompts'
+import { CARD_RUBRIC, LEVEL_BRIEF, STE_RULES, levelFor, simplifyPrompt } from './prompts'
 import { orderedTips, tipFor, type TipContext } from './tips'
 
 // Everything that takes `$` lives in this file: the engine follows `$` into
@@ -132,14 +132,6 @@ const CARD_ITEM = `{"topic": short category such as "system design" or "TypeScri
  "choices": exactly 4 short options for a multiple-choice quiz,
  "answer": the 0-based index of the correct choice}`
 
-const STE_RULES = `Write "front", "back" and "choices" in ASD-STE100 Simplified Technical English:
-- Use simple, common words with one meaning each. Technical names (APIs, types, tools) are allowed.
-- Keep each sentence to 20 words or fewer for an instruction, 25 or fewer for a description.
-- Use the active voice and the simple tenses (present, past, future).
-- Write one instruction or one idea in each sentence.
-- Do not leave out "the", "a" or verbs to make text shorter.
-- Do not use phrasal verbs ("set up", "look into") or noun clusters of more than 3 words.
-- Do not use "-ing" words as nouns or adjectives, except in technical names.`
 
 const CARD_SHAPE = `Reply with ONLY a JSON array, no prose. Each item:
 ${CARD_ITEM}
@@ -1133,6 +1125,7 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
   const { Box, Text, Button } = d.ui
   const Client = d.surface === 'terminal' || d.surface === 'desktop' ? d.ui.Client : undefined
   const roomy = isRoomy(d)
+  const isTerminal = d.surface === 'terminal'
   const key = (k: string, label: string, onPress: () => unknown, extra: Record<string, unknown> = {}) => (
     <Button key={k} label={label} plain dimColor onPress={onPress} {...extra} />
   )
@@ -1182,7 +1175,7 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
     }
     const [top] = arrowLines(map)
     const indent = top.length - top.trimStart().length
-    arrows = (
+    arrows = isTerminal ? (
       <Box flexDirection="column">
         <Box marginLeft={indent}>{cell('i')}</Box>
         <Box gap={2}>
@@ -1190,6 +1183,68 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
           {cell('k')}
           {cell('l')}
         </Box>
+      </Box>
+    ) : (
+      // A proportional font cannot line `i` up over `k`: one row, in arrow order.
+      <Box gap={2}>
+        {cell('j')}
+        {cell('i')}
+        {cell('k')}
+        {cell('l')}
+      </Box>
+    )
+  }
+
+  const status = `${due} due${toLearn > 0 ? ` · ${toLearn} to learn` : ''}${busy === null ? '' : ` · ⟳ ${busy.label}`}`
+  const hint =
+    isStudy && Client ? (
+      <Client key={KEYS} module="./keys.tsx" props={{ hint: keyHint(ctx) }} />
+    ) : (
+      <Text dimColor wrap="truncate-end">
+        {keyHint(ctx)}
+      </Text>
+    )
+  const tabs = TAB_ORDER.map((mode: Mode) =>
+    key(
+      `tab-${mode}`,
+      mode === v.mode ? `•${TAB_LABELS[d.density][mode]}` : TAB_LABELS[d.density][mode],
+      () => setMode($, mode),
+      { hotkey: TAB_KEYS[mode] },
+    ),
+  )
+  const help = v.isHelp && (
+    <Box flexDirection="column" marginTop={1}>
+      {HELP_LINES.map(([keys, what]) => (
+        <Text key={`help-${keys}`} dimColor wrap="truncate-end">
+          {keys.padEnd(roomy ? 15 : 10)}
+          {what}
+        </Text>
+      ))}
+    </Box>
+  )
+
+  if (!isTerminal) {
+    // Desktop, VS Code, mobile: draw keycaps for hotkeys in a proportional font, so a
+    // drawn rule wraps and spaces do not align. One framed block, four short rows.
+    return (
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+        <Box justifyContent="space-between">
+          <Text dimColor bold>
+            Shortcuts
+          </Text>
+          <Text dimColor>{status}</Text>
+        </Box>
+        {hint}
+        <Box gap={2} flexWrap="wrap">
+          {arrows}
+          <Box gap={1} flexWrap="wrap">
+            {actions}
+          </Box>
+        </Box>
+        <Box gap={1} flexWrap="wrap">
+          {tabs}
+        </Box>
+        {help}
       </Box>
     )
   }

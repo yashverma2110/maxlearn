@@ -65,6 +65,31 @@ Reply with ONLY a JSON array with one lesson:
 [{"topic": "${lesson.topic}", "title": "...", "body": "...", "example": "...", "cards": [{"front": "...", "back": "...", "choices": ["...", "...", "...", "..."], "answer": 0}]}]`
 }
 
+/**
+ * ASD-STE100 Simplified Technical English, as the model can follow it without
+ * the dictionary: every text field of a lesson or card, not only the cards.
+ */
+export const STE_RULES = `Write ALL text ("title", "body", "example", "front", "back", "choices") in ASD-STE100 Simplified Technical English:
+Words
+- Use simple, common words. Use each word with one meaning only (for example, "test" is a check, never an exam).
+- Technical names are allowed: commands, APIs, types, settings, tools and units (lock_timeout, ACCESS EXCLUSIVE, 2s).
+- Use the same word for the same thing each time. Do not use synonyms for variety.
+- Do not use phrasal verbs ("set up", "look into", "fill up"). Use one verb ("configure", "examine", "fill").
+- Do not use "-ing" words as nouns or adjectives, except in technical names.
+- Do not use noun clusters of more than 3 words.
+- Write "to", not "in order to". Write "if", not "in case". Write "can" for ability and "must" for a requirement; do not use "may" or "might" for these.
+Sentences
+- Keep each sentence to 20 words or fewer for an instruction, 25 or fewer for a description.
+- Write one instruction or one idea in each sentence.
+- Use the active voice. Use the simple tenses: present, past and future.
+- Do not leave out "the", "a" or verbs to make text shorter.
+- Write instructions as commands ("Set lock_timeout before the ALTER.").
+- Put a condition before the action it controls ("If the lock is busy, the ALTER waits.").
+- Put a warning or caution before the step it is about.
+Paragraphs
+- Give each paragraph one topic. Keep a paragraph to 6 sentences or fewer.
+- Give numbers with their units, exactly ("10 minutes", "2 s", "8 GB").`
+
 export const CARD_RUBRIC = `What makes a good card (follow all):
 - One idea per card. The answer fits in 1-3 sentences. No lists of more than 3 items.
 - Be specific: name the mechanism, command, setting, data structure, number or failure mode.

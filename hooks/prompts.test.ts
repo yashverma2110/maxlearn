@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isWeakFront, levelFor } from './prompts'
+import { STE_RULES, isWeakFront, levelFor } from './prompts'
 import { parseCards } from './srs'
 
 test('generic questions are weak; specific ones pass', async () => {
@@ -38,4 +38,12 @@ test('each Simplify steps the level down, to intro at the lowest', async () => {
   expect(levelFor(undefined, 1)).toBe('mid')
   expect(levelFor(undefined, 2)).toBe('intro')
   expect(levelFor(undefined, 9)).toBe('intro')
+})
+
+test('the STE rules cover every text field of lessons and cards', async () => {
+  for (const field of ['"title"', '"body"', '"example"', '"front"', '"back"', '"choices"']) {
+    expect(STE_RULES).toContain(field)
+  }
+  expect(STE_RULES).toContain('ASD-STE100')
+  expect(STE_RULES).toContain('20 words or fewer')
 })

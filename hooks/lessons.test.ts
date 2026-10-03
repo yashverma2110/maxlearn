@@ -177,6 +177,7 @@ test('adding an interest shows at once and queues two lessons on it', async ($, 
   expect(prompts.length).toBe(1)
   expect(prompts[0]).toContain('1. "redis"')
   expect(prompts[0]).toContain('2. "redis"')
+  expect(prompts[0]).toContain('Write ALL text ("title", "body", "example"')
   await ui.press({ key: 'tab-progress' })
   await ui.press({ key: 'ins-overview' })
   expect(await ui.find({ text: /Interests: redis/ })).toBeDefined()
