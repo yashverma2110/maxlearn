@@ -87,8 +87,8 @@ test('settings: pick FSRS and a target; the next grade uses it', async ($, on) =
   await ui.press({ key: 'tab-settings' })
   expect(await ui.find({ key: 'retention-0.9' })).toBeUndefined() // only with FSRS
   await ui.press({ key: 'algorithm-fsrs' })
-  expect((await ui.find({ key: 'algorithm-fsrs' }))?.props.label).toBe('•FSRS')
-  expect((await ui.find({ key: 'retention-0.9' }))?.props.label).toBe('•90%')
+  expect((await ui.find({ key: 'algorithm-fsrs' }))?.props.dimColor).toBe(false)
+  expect((await ui.find({ key: 'retention-0.9' }))?.props.dimColor).toBe(false)
 
   await ui.press({ key: 'tab-review' })
   await ui.press({ key: 'reveal' })

@@ -404,6 +404,8 @@ export function generate($: $, label: string, work: () => Promise<number>, isAut
     if (busy !== null) {
       if ((busy.label === label && busy.noun === noun) || queue.some(q => q.label === label && q.noun === noun)) return
       queue.push({ label, work, isAuto, noun, lessonId })
+      // The queue is module state: ask for a redraw so "Queued next" shows.
+      $.ui.invalidate('ui.render')
       if (!isAuto) $.ui.toast(`📚 Queued: ${noun}s ${writingWhat(label)}`)
       return
     }
@@ -1209,7 +1211,7 @@ function subTabs<T extends string>($: $, d: Draw, prefix: string, names: T[], cu
       {names.map(name => (
         <Button
           key={`${prefix}-${name}`}
-          label={name === current ? `•${name}` : name}
+          label={name}
           plain
           dimColor={name !== current}
           onPress={() => setView($, pick(name))}
@@ -1447,9 +1449,9 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
   const tabs = TAB_ORDER.map((mode: Mode) =>
     key(
       `tab-${mode}`,
-      mode === v.mode ? `•${TAB_LABELS[d.density][mode]}` : TAB_LABELS[d.density][mode],
+      TAB_LABELS[d.density][mode],
       () => setMode($, mode),
-      { hotkey: TAB_KEYS[mode] },
+      { hotkey: TAB_KEYS[mode], dimColor: mode !== v.mode },
     ),
   )
   const help = v.isHelp && (
@@ -1507,9 +1509,9 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
         {TAB_ORDER.map((mode: Mode) =>
           key(
             `tab-${mode}`,
-            mode === v.mode ? `•${TAB_LABELS[d.density][mode]}` : TAB_LABELS[d.density][mode],
+            TAB_LABELS[d.density][mode],
             () => setMode($, mode),
-            { hotkey: TAB_KEYS[mode] },
+            { hotkey: TAB_KEYS[mode], dimColor: mode !== v.mode },
           ),
         )}
       </Box>
@@ -1549,8 +1551,21 @@ function NextSteps($: $, d: Draw, i: Insights, kind: 'cards' | 'quiz' = 'cards')
   const { Box, Button, Text } = d.ui
   // Weakest first, then this week's thin work topics, then interests: four at most.
   const topics = [...new Set([...i.improve.map(t => t.topic), ...i.work.filter(w => w.isThin).map(w => w.topic), ...i.savedInterests])].slice(0, 4)
+  const noun: Noun = kind === 'quiz' ? 'quiz question' : 'card'
+  // What is being written or waiting, so a press shows at once that it took.
+  const writing = i.busy !== null && (i.busy.noun ?? 'card') === noun ? i.busy.label : undefined
+  const waiting = queue.filter(q => q.noun === noun).map(q => q.label)
+  const isBusyWith = (label: string) => writing === label || waiting.includes(label)
+  const what = kind === 'quiz' ? 'quiz questions' : 'flashcards'
   return (
     <Box flexDirection="column" gap={1}>
+      {writing !== undefined && (
+        <Text wrap="wrap">
+          ⟳ Writing 3 {what} {writingWhat(writing)}…{' '}
+          <Text dimColor>{kind === 'quiz' ? 'They appear here when ready.' : 'They wait on the learn tab when ready.'}</Text>
+        </Text>
+      )}
+      {waiting.length > 0 && <Text dimColor wrap="wrap">Queued next: {waiting.join(', ')}</Text>}
       {topics.length > 0 && (
         <Text dimColor wrap="wrap">
           {kind === 'quiz' ? 'Write 3 quiz questions, ready now, on:' : 'Write 3 flashcards (you learn them first) on:'}
@@ -1560,13 +1575,17 @@ function NextSteps($: $, d: Draw, i: Insights, kind: 'cards' | 'quiz' = 'cards')
         {topics.map((topic, n) => (
           <Button
             key={n === 0 ? 'next-topic' : `next-topic-${topic}`}
-            label={`+ ${topic}`}
+            label={isBusyWith(topic) ? `⟳ ${topic}` : `+ ${topic}`}
             variant={n === 0 ? 'primary' : undefined}
-            onPress={() => generate($, topic, () => fromInterest($, topic, kind), false, kind === 'quiz' ? 'quiz question' : 'card')}
+            onPress={() => (isBusyWith(topic) ? undefined : generate($, topic, () => fromInterest($, topic, kind), false, noun))}
           />
         ))}
         {kind === 'cards' && (
-          <Button key="next-chat" label="from this chat" onPress={() => generate($, 'this chat', () => fromChat($))} />
+          <Button
+            key="next-chat"
+            label={isBusyWith('this chat') ? '⟳ from this chat' : 'from this chat'}
+            onPress={() => (isBusyWith('this chat') ? undefined : generate($, 'this chat', () => fromChat($)))}
+          />
         )}
       </Box>
       {i.savedInterests.length === 0 && (
@@ -1642,7 +1661,7 @@ function WelcomeTab($: $, d: Draw, v: View, s: StudySettings) {
         {PROFICIENCIES.map(p => (
           <Button
             key={`level-${p.value}`}
-            label={p.value === s.proficiency ? `• ${p.label}` : p.label}
+            label={p.label}
             dimColor={p.value !== s.proficiency}
             onPress={() => saveSettings($, { proficiency: p.value })}
           />
@@ -2155,7 +2174,7 @@ export function SettingsTab($: $, d: Draw, s: StudySettings, v: View) {
           {options.map(o => (
             <Button
               key={`${key}-${o.value}`}
-              label={o.value === value ? `•${o.label}` : o.label}
+              label={o.label}
               plain
               dimColor={o.value !== value}
               onPress={() => onPick(o.value)}

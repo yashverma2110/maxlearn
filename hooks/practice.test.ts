@@ -89,13 +89,13 @@ test('Teach me on a revealed flashcard: a lesson now, then back to review', asyn
   await ui.press({ key: 'reveal' })
   expect((await ui.find({ key: 'teach' }))?.props.hotkey).toBe('t')
   await ui.press({ key: 'teach' })
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   await settle()
   expect(prompts.at(-1)).toContain('Question: Why can Redis lose the last second of writes?')
   expect(await ui.find({ text: /fsync decides how much an AOF can lose/ })).toBeDefined()
 
   await ui.press({ key: 'learn-next' })
-  expect((await ui.find({ key: 'tab-review' }))?.props.label).toBe('•review')
+  expect((await ui.find({ key: 'tab-review' }))?.props.dimColor).toBe(false)
   expect(await ui.find({ key: 'reveal' })).toBeDefined() // the same card, face down, to grade
   await ui.unmount()
 })
@@ -108,6 +108,40 @@ test('Teach me after a quiz answer returns to the quiz', async ($, on) => {
   await ui.press({ key: 'teach' })
   await settle()
   await ui.press({ key: 'learn-skip' })
-  expect((await ui.find({ key: 'tab-quiz' }))?.props.label).toBe('•quiz')
+  expect((await ui.find({ key: 'tab-quiz' }))?.props.dimColor).toBe(false)
+  await ui.unmount()
+})
+
+test('a press shows at once: the empty state says what is being written, the chip spins', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off' }, onboarded: true, interests: ['redis', 'kafka'] })
+  let finish: () => void = () => {}
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', () =>
+    new Promise(resolve => {
+      finish = () => resolve({ value: { isAnswered: true as const, text: QUIZ, usage: USAGE } })
+    }),
+  )
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab-quiz' })
+  await ui.press({ key: 'next-topic' })
+  await clock.advance(10)
+  expect(await ui.find({ text: /Writing 3 quiz questions on redis/ })).toBeDefined()
+  expect((await ui.find({ key: 'next-topic' }))?.props.label).toBe('⟳ redis')
+
+  // A second topic waits its turn, and says so.
+  await ui.press({ key: 'next-topic-kafka' })
+  await clock.advance(10)
+  expect(await ui.find({ text: /Queued next: kafka/ })).toBeDefined()
+
+  finish()
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  expect(String((await ui.find({ key: 'choice-1' }))?.props.label)).toContain('fsync once a second')
   await ui.unmount()
 })

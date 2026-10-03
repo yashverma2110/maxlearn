@@ -85,13 +85,13 @@ test('settings tab picks the models on every surface', async ($, on) => {
     await ui.press({ key: 'chat-model-haiku' })
     await ui.press({ key: 'interest-model-opus' })
     await ui.press({ key: 'focus-work' })
-    expect((await ui.find({ key: 'chat-model-haiku' }))?.props.label).toBe('•haiku')
+    expect((await ui.find({ key: 'chat-model-haiku' }))?.props.dimColor).toBe(false)
     expect((await ui.find({ key: 'chat-model-sonnet' }))?.props.label).toBe('sonnet')
-    expect((await ui.find({ key: 'interest-model-opus' }))?.props.label).toBe('•opus')
-    expect((await ui.find({ key: 'focus-work' }))?.props.label).toBe('•daily work')
+    expect((await ui.find({ key: 'interest-model-opus' }))?.props.dimColor).toBe(false)
+    expect((await ui.find({ key: 'focus-work' }))?.props.dimColor).toBe(false)
     // Leaving settings by its tab key works.
     await ui.press({ key: 'tab-review' })
-    expect((await ui.find({ key: 'tab-review' }))?.props.label).toBe('•rev')
+    expect((await ui.find({ key: 'tab-review' }))?.props.dimColor).toBe(false)
     await ui.unmount()
   }
 })
@@ -124,7 +124,7 @@ test('insights tab: sub-views on every surface, +3 for a thin work topic', async
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ plugin: 'maxlearn', surface, ...pane })
     await ui.press({ key: 'tab-progress' })
-    expect((await ui.find({ key: 'tab-progress' }))?.props.label).toBe('•ins')
+    expect((await ui.find({ key: 'tab-progress' }))?.props.dimColor).toBe(false)
     await ui.press({ key: 'ins-topics' })
     expect(await ui.find({ text: /Improve/ })).toBeDefined()
     await ui.press({ key: 'ins-work' })

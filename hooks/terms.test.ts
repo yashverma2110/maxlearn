@@ -121,7 +121,7 @@ test('overview shows interests as chips: subtopic count, a press writes lessons 
   await settle()
   expect(prompts.length).toBe(before + 1)
   expect(prompts.at(-1)).toContain('1. "postgres"')
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   await ui.unmount()
 })
 

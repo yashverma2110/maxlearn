@@ -39,12 +39,12 @@ test('a new learner picks interests and a level, then gets one lesson call over 
 
   await ui.press({ key: 'welcome-next' })
   await ui.press({ key: 'level-mid' })
-  expect((await ui.find({ key: 'level-mid' }))?.props.label).toBe('• Junior / mid')
+  expect((await ui.find({ key: 'level-mid' }))?.props.dimColor).toBe(false)
   expect(await ui.find({ text: /cover postgres and kafka/ })).toBeDefined()
   await ui.press({ key: 'welcome-start' })
   for (let n = 0; n < 4; n++) await clock.advance(10)
 
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   expect(prompts.length).toBe(1)
   expect(prompts[0]).toContain('1. "postgres" for a mid-level engineer')
   expect(prompts[0]).toContain('2. "kafka" for a mid-level engineer')
@@ -57,7 +57,7 @@ test('skip: no interests, no model call, straight to learn', async ($, on) => {
   const { clock, prompts, ui } = await start($, on, {})
   await ui.press({ key: 'welcome-skip' })
   await clock.advance(10)
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   expect(prompts.length).toBe(0)
   await ui.unmount()
 })
@@ -103,6 +103,6 @@ test('start over: two steps, then everything but the settings is gone and onboar
   expect(stats.text).toContain('No cards or interests yet')
   await ui.press({ key: 'welcome-skip' })
   await ui.press({ key: 'tab-settings' })
-  expect((await ui.find({ key: 'algorithm-fsrs' }))?.props.label).toBe('•FSRS') // settings kept
+  expect((await ui.find({ key: 'algorithm-fsrs' }))?.props.dimColor).toBe(false) // settings kept
   await ui.unmount()
 })

@@ -111,7 +111,7 @@ test('keyboard quiz: arrows move the ▸ cursor, enter answers', async ($, on) =
   await start($, on, [card({ choices: ['Speed', 'Dead tuples', 'Auth', 'Logs'], answer: 1 })])
   const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
   await ui.key({ key: ']', in: 'keys' })
-  expect((await ui.find({ key: 'tab-quiz' }))?.props.label).toBe('•quiz')
+  expect((await ui.find({ key: 'tab-quiz' }))?.props.dimColor).toBe(false)
   await ui.key({ key: 'down', in: 'keys' })
   expect(String((await ui.find({ key: 'choice-1' }))?.props.label)).toContain('▸')
   await ui.key({ key: 'return', in: 'keys' })
@@ -205,7 +205,7 @@ test('i j k l move the highlight outside the card tabs; esc closes the pane', as
   // covered by focusOrder/ringStep above; here pressing must be harmless.
   await ui.press({ key: 'nav-down' })
   await ui.press({ key: 'nav-up' })
-  expect((await ui.find({ key: 'tab-settings' }))?.props.label).toBe('•settings')
+  expect((await ui.find({ key: 'tab-settings' }))?.props.dimColor).toBe(false)
 
   // On the card tabs i j k l keep their card meanings: no nav buttons there.
   await ui.press({ key: 'tab-review' })

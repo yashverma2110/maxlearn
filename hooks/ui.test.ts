@@ -139,7 +139,9 @@ test('every surface at both widths: header, grade intervals, summary, insights, 
   for (const footerKey of ['"key":"undo"', '"key":"tab-review"', '"key":"drop"']) {
     expect(tree.indexOf(footerKey)).toBeGreaterThan(tree.indexOf('"key":"grade-easy"'))
   }
-  expect((await ui.find({ key: 'tab-review' }))?.props.dimColor).toBe(true)
+  // The active tab is bright, the rest dim: no marker needed.
+  expect((await ui.find({ key: 'tab-review' }))?.props.dimColor).toBe(false)
+  expect((await ui.find({ key: 'tab-quiz' }))?.props.dimColor).toBe(true)
 
   // The footer sits at the bottom of the pane: the root fills the body's rows
   // and pushes its last child (the footer) down.

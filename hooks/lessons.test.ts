@@ -171,7 +171,7 @@ test('adding an interest shows at once and queues two lessons on it', async ($, 
   expect(ran.text).toContain('Added "redis"')
 
   // At once, before the model answers: learn tab, spinner, interest on the dashboard.
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   expect(await ui.find({ text: /Writing 2 lessons/ })).toBeDefined()
   await clock.advance(10)
   expect(prompts.length).toBe(1)
@@ -208,7 +208,7 @@ test('the more tab adds an interest from its field', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab-add' })
   await ui.input({ key: 'add-interest', text: 'Kafka' })
-  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect((await ui.find({ key: 'tab-learn' }))?.props.dimColor).toBe(false)
   await ui.press({ key: 'tab-add' })
   expect(await ui.find({ key: 'more-kafka' })).toBeDefined()
   await ui.unmount()
