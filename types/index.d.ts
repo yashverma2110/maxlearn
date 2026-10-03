@@ -57,6 +57,8 @@ export type StudySettings = {
   autoPeriod: AutoPeriod
   /** Make an interest's cards when the chat touches it. */
   autoOnChat: 'on' | 'off'
+  /** Check the chat every few turns for topics and cards. */
+  chatCards: 'on' | 'off'
   algorithm: Algorithm
   retention: Retention
 }

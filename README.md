@@ -54,7 +54,7 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 | Interest / lesson model | opus, **sonnet**, haiku |
 | Focus | daily work, **balanced**, my interests |
 | Scheduler | **SM-2**, FSRS (with target recall 85% / **90%** / 95%) |
-| Auto cards | each interest every off / 12h / **24h** / 3 days / week; on chat touch on / off |
+| Auto cards | each interest every off / 12h / **24h** / 3 days / week; on chat touch **on** / off; cards from chat **on** / off |
 | Takeaways | off / **every 30s** / every 2m |
 
 ### Spaced repetition: FSRS and SM-2
@@ -83,14 +83,37 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 | `/study chat` | make cards from this chat now |
 | `/study stats` · `/study tips` | progress / tips as text |
 
-## Run it
+## Install
+
+In Claude Code:
+
+```
+/plugin marketplace add yashverma2110/maxlearn
+/plugin install maxlearn@maxlearn
+```
+
+Or run it from a clone:
 
 ```sh
-git clone git@github.com:yashverma2110/maxlearn.git
+git clone https://github.com/yashverma2110/maxlearn.git
 claude --plugin-dir ./maxlearn
 ```
 
-The pane docks beside the chat in terminals at least 144 columns wide; otherwise run `/study`. Your data lives in Claude Code's plugin store, so it carries across sessions.
+The pane docks beside the chat in terminals at least 144 columns wide; otherwise run `/study`. Your data lives in Claude Code's plugin store on your machine, so it carries across sessions.
+
+## What it uses
+
+maxlearn runs with the same access as Claude Code, like every mod. Here is what it does with it:
+
+| It uses | When | Turn it off |
+|---|---|---|
+| **Model calls on your account** | A short fork of the chat every 3 turns to find topics and cards (prompt-cached by default) | settings → Auto cards → Cards from chat → off |
+| | 2 lessons per call when you press **Next** with nothing queued, and per **Simplify** | only on your press |
+| | 3 cards per interest each period (default 24h), and when a chat touches an interest (at most every 4h) | settings → Auto cards → period off, chat touch off |
+| **Your chat transcript** | Read to name topics and write cards; sent nowhere except the model calls above | settings → Auto cards → Cards from chat → off |
+| **Local storage** | Cards, reviews, lessons, settings and time per topic, in Claude Code's plugin store | delete the `maxlearn_*` file in `~/.claude/plugins/store/` |
+
+It reads no files and runs no commands. Nothing leaves your machine except the model calls.
 
 ## Develop
 
@@ -100,3 +123,7 @@ claude plugin test .     # 62 tests
 ```
 
 The code is split into pure modules (`srs`, `fsrs`, `analytics`, `usage`, `lessons`, `prompts`, `keymap`, `layout`, `tips`, `auto`, `insight`) and one hooks module (`register.tsx`) that holds everything touching Claude Code's engine.
+
+## License
+
+[MIT](LICENSE)

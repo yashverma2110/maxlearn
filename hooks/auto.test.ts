@@ -23,7 +23,7 @@ test('periodDue: the longest-waiting interest past its period, one at a time', a
 })
 
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
-const answer = (text: string) => ({ value: { isAnswered: true, text, usage: USAGE } })
+const answer = (text: string) => ({ value: { isAnswered: true as const, text, usage: USAGE } })
 
 async function start($: any, on: any, store: Record<string, unknown>) {
   const clock = mock.clock(on)
@@ -101,4 +101,26 @@ test('turning the feature on starts each interest\'s period instead of firing at
   // Many checks ran in that jump; each took one due interest, so each got one run.
   expect(askedAbout(asked, 'postgres')).toBe(1)
   expect(askedAbout(asked, 'redis')).toBe(1)
+})
+
+test('cards from chat off: finished turns never fork the chat', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off', chatCards: 'off' } })
+  let forks = 0
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('model.fork', async () => {
+    forks += 1
+    return answer('{"topics":[],"cards":[]}')
+  })
+  on('turn.complete', async () => ({ text: 'ok' }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  for (let n = 0; n < 6; n++) {
+    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: `t${n}`, reason: 'end_turn' } as never)
+    await clock.advance(10)
+  }
+  expect(forks).toBe(0)
 })

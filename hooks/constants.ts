@@ -45,6 +45,7 @@ export const DEFAULT_SETTINGS: StudySettings = {
   insightPace: '30s',
   autoPeriod: '24h',
   autoOnChat: 'on',
+  chatCards: 'on',
   algorithm: 'sm2',
   retention: '0.9',
 }

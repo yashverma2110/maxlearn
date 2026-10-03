@@ -1831,6 +1831,9 @@ export function SettingsTab($: $, d: Draw, s: StudySettings) {
           {picker('auto-chat', 'When chat touches an interest: ', s.autoOnChat, ON_OFF, value =>
             saveSettings($, { autoOnChat: value as 'on' | 'off' }),
           )}
+          {picker('chat-cards', `Cards from chat every ${CHAT_EVERY_TURNS} turns: `, s.chatCards, ON_OFF, value =>
+            saveSettings($, { chatCards: value as 'on' | 'off' }),
+          )}
           <Text dimColor wrap="wrap">
             3 new cards per interest each period, one interest at a time. From chat, at most once every 4h per interest.
           </Text>
@@ -2050,7 +2053,7 @@ export const register: Register = on => {
     if (e.agentId === undefined && !e.isAborted) {
       pendingChatMs += e.durationMs
       turns += 1
-      if (turns % CHAT_EVERY_TURNS === 0) generate($, 'this chat', () => fromChat($))
+      if (turns % CHAT_EVERY_TURNS === 0 && (await read($, settings)).chatCards !== 'off') generate($, 'this chat', () => fromChat($))
     }
     return result
   })

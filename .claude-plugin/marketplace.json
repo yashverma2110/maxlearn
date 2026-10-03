@@ -1,0 +1,15 @@
+{
+  "name": "maxlearn",
+  "description": "maxlearn: a Claude Code study companion that teaches from your chats and interests",
+  "owner": {
+    "name": "Yash Verma",
+    "url": "https://github.com/yashverma2110"
+  },
+  "plugins": [
+    {
+      "name": "maxlearn",
+      "source": "./",
+      "description": "Study companion: lessons and flashcards from your chats and interests, scheduled with FSRS or SM-2 spaced repetition"
+    }
+  ]
+}
