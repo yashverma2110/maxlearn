@@ -141,6 +141,8 @@ export const HELP_LINES: [string, string][] = [
   ['u', 'undo the last grade'],
   ['d', 'drop a bad card for good'],
   ['z', 'simplify the lesson shown'],
+  ['t', 'teach me: a lesson on the card shown'],
+  ['w', 'explain the word you selected'],
   ['r q p m o', 'review · quiz · insights · more · settings'],
   ['h', 'show or hide this list'],
   ['x', 'close the pane'],

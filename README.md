@@ -69,6 +69,7 @@ The **learn** tab (`e`) shows one lesson at a time: the idea, why it matters, an
 - **Next** (`enter`) adds the lesson's cards to your review. Their first review comes 10 minutes later.
 - **Skip** (`n`) moves on without adding anything.
 - **Simplify** (`z`) rewrites the lesson in simpler words. Later lessons on that topic start a level lower.
+- **Don't know a word?** Press one of the **New words?** chips under the lesson (like `MVCC?`), paste any term into **Explain**, or, in the fullscreen terminal, select it with the mouse and press `w`. A short lesson on that term opens right away, and you return to the lesson you were reading.
 
 You can also learn in the chat: `/study learn` posts a lesson with the same **Next** and **Simplify** buttons.
 
@@ -80,6 +81,10 @@ When cards are due, the **review** tab (`r`) shows them one at a time.
 3. Grade yourself honestly: `1` again · `2` hard · `3` good · `4` easy, or move with `j` `l` and press `enter`. Each button shows when the card comes back.
 
 Graded wrong by mistake? `u` undoes it. A bad card? `d` drops it for good. Prefer multiple choice? Use **quiz** (`q`).
+
+Don't fully get a card? Press **Teach me** (`t`) after revealing it, or after answering a quiz question: a lesson on the idea behind it opens, and **Next** brings you back.
+
+Nothing due? The empty review and quiz offer one chip per topic: **+ postgres** writes 3 flashcards (you learn them first) or 3 quiz questions (ready right away).
 
 ### 5. Keep going
 - **Just work as usual.** Every few turns maxlearn checks your chat; if you worked something out, it makes cards from it. Pure command-running makes none.
@@ -110,18 +115,21 @@ Press `h` in the pane for every key. `/study tips` lists tips for your current s
 - **learn tab:** your unseen cards with their answers first (free), then written lessons. Each lesson carries 1–2 cards that test exactly what it taught.
 - **`/study learn`:** a lesson card right in the conversation. **Next** swaps the next lesson into the same row.
 - **Low token cost:** one model call writes **two** lessons, one for now and one for your next Next.
+- **Explain a term:** each lesson lists the terms you may not know. One press writes a short lesson on the term, in the context of its topic, and files it as a **subtopic** (postgres → DDL, MVCC). Insights → topics lists your subtopics, with `+` to go deeper.
 
 ### Review and quiz
 - **review:** reveal the answer, then grade it *again / hard / good / easy*. Each button shows when the card will come back (`good · 4d`).
 - **quiz:** multiple choice; your answer grades the card.
+- **Teach me** (`t`): a lesson on the idea behind any flashcard or quiz question, then back to where you were.
+- **Empty states make more:** one chip per topic writes 3 flashcards, or 3 quiz questions that are ready immediately (a quiz is a fine first look: you see the answer right after you pick).
 - **Corrections:** `u` undoes a grade (and removes it from your stats); `d` drops a bad card for good.
 - **Takeaways:** the line under the input shows a short takeaway from a card you've already reviewed. It never shows a card that's due, so it can't give away a test.
 
 ### Insights
 | View | Shows |
 |---|---|
-| **overview** | streak, recall over 30 days, mature cards, a 12-week review heat map |
-| **topics** | **topics that need more review** (weakest first, with the reason), strong topics, your interests, and **time spent per topic** in chat, review and learning |
+| **overview** | streak, recall over 30 days, mature cards, a 12-week review heat map, and your interests as chips (press one for 2 new lessons on it) |
+| **topics** | **subtopics you explored**, **topics that need more review** (weakest first, with the reason), strong topics, your interests, and **time spent per topic** in chat, review and learning |
 | **work** | topics from the last 7 days of chat, how many days each came up, and `+3 cards` for topics with too few cards |
 | **chats** | **which topics came up in which chats**, and how long each chat spent on each |
 
@@ -152,6 +160,7 @@ Press `h` in the pane for every key. `/study tips` lists tips for your current s
 | `1` `2` `3` `4` | grade again / hard / good / easy |
 | `a`–`d` | pick a quiz choice |
 | `n` / `u` / `d` | skip / undo / drop |
+| `t` / `z` / `w` | teach me / simplify / explain the selected word |
 | `e r q p m o` | learn, review, quiz, insights, more, settings |
 | `h` / `esc` | show all keys / close the pane |
 
@@ -184,7 +193,7 @@ It reads no files and runs no commands. Nothing leaves your machine except the m
 
 ```sh
 claude plugin validate .
-claude plugin test .     # 82 tests
+claude plugin test .     # 93 tests
 ```
 
 The code is split into pure modules (`srs`, `fsrs`, `analytics`, `usage`, `lessons`, `prompts`, `keymap`, `layout`, `tips`, `auto`, `insight`) and one hooks module (`register.tsx`) that holds everything touching Claude Code's engine.

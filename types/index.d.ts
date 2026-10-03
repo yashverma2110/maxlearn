@@ -24,6 +24,8 @@ export type Card = {
   difficulty?: number
   /** When it was last graded. */
   lastReviewAt?: number
+  /** The term it explains, when it came from Explain: a subtopic of `topic`. */
+  subtopic?: string
   /** When its answer was first shown on the learn screen; unset means still to learn. */
   learnedAt?: number
 }
@@ -95,7 +97,7 @@ export type InsightsView = 'overview' | 'topics' | 'work' | 'chats'
 export type Generating = {
   label: string
   startedAt: number
-  noun?: 'card' | 'lesson' | 'simpler lesson'
+  noun?: 'card' | 'lesson' | 'simpler lesson' | 'quiz question'
   /** The lesson being rewritten, for Simplify. */
   lessonId?: string
 }
@@ -110,6 +112,12 @@ export type Lesson = {
   title: string
   body: string
   example?: string
+  /** Terms in the lesson a learner may not know; each can be explained. */
+  terms?: string[]
+  /** The card this lesson teaches in depth, when it came from Teach me. */
+  fromCard?: string
+  /** The term this lesson explains, when it came from Explain. */
+  subtopic?: string
   /** Cards that join the deck once the lesson is learned. Empty for a card lesson. */
   cards: Card[]
   createdAt: number
@@ -138,6 +146,8 @@ export type View = {
   picked?: string[]
   /** Settings: the reset button was pressed once and waits for a confirm. */
   isConfirmingReset?: boolean
+  /** Where Next on a Teach-me lesson goes back to. */
+  returnTo?: Mode
 }
 
 /** The one grade `u` can take back: the card as it was, and its log entry. */
@@ -167,6 +177,8 @@ declare module 'claude-code' {
       chatSessions: ChatSession[]
       /** Time reading lessons, per topic. */
       learnTime: Record<string, number>
+      /** Terms explained per topic: postgres → [ddl, mvcc]. */
+      subtopics: Record<string, string[]>
     }
   }
 }

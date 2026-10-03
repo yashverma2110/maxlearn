@@ -50,7 +50,7 @@ export function learn(lesson: Lesson, deck: Card[], now: number): Card[] {
   return [...deck, ...fresh]
 }
 
-type RawLesson = { topic?: unknown; title?: unknown; body?: unknown; example?: unknown; cards?: unknown }
+type RawLesson = { topic?: unknown; title?: unknown; body?: unknown; example?: unknown; terms?: unknown; cards?: unknown }
 
 /** Parses the model's lessons; drops malformed ones and lessons whose title repeats one already known. */
 export function parseLessons(text: string, deck: Card[], known: Lesson[], now: number): Lesson[] {
@@ -81,6 +81,7 @@ export function parseLessons(text: string, deck: Card[], known: Lesson[], now: n
       title: r.title.trim(),
       body: r.body.trim(),
       example: typeof r.example === 'string' && r.example.trim() !== '' ? r.example.trim() : undefined,
+      terms: cleanTerms(r.terms),
       cards,
       createdAt: now,
     })
@@ -107,4 +108,70 @@ export function lessonMarkdown(lesson: Lesson): string {
   const parts = [`**${lesson.title}**`, lesson.body]
   if (lesson.example) parts.push(`_Example:_ ${lesson.example}`)
   return parts.join('\n\n')
+}
+
+/** The longest term Explain takes: a word or a short phrase, not a passage. */
+export const MAX_TERM = 40
+
+/** A term as typed, pasted or selected: trimmed, unquoted, one line; undefined when empty or too long. */
+export function cleanTerm(raw: string): string | undefined {
+  const t = raw
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^["'`“”‘’(\[]+|["'`“”‘’)\].,;:?!]+$/g, '')
+    .trim()
+  return t === '' || t.length > MAX_TERM ? undefined : t
+}
+
+/** Up to 4 distinct terms from the model's list. */
+function cleanTerms(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const seen = new Set<string>()
+  const terms: string[] = []
+  for (const r of raw) {
+    const t = typeof r === 'string' ? cleanTerm(r) : undefined
+    if (t === undefined || seen.has(t.toLowerCase())) continue
+    seen.add(t.toLowerCase())
+    terms.push(t)
+  }
+  return terms.length === 0 ? undefined : terms.slice(0, 4)
+}
+
+/** Adds `term` under `topic`, once, case-insensitively; newest last. */
+export function addSubtopic(map: Record<string, string[]>, topic: string, term: string): Record<string, string[]> {
+  const list = map[topic] ?? []
+  if (list.some(t => t.toLowerCase() === term.toLowerCase())) return map
+  return { ...map, [topic]: [...list, term].slice(-20) }
+}
+
+/** The ask for a lesson that explains `term`, a word a learner met in a lesson on `topic`. */
+export function termPrompt(term: string, topic: string, context: string | undefined): string {
+  return `A learner reading about "${topic}" met the term "${term}" and does not know it.
+Write ONE short lesson that explains "${term}" as it is used in ${topic}:
+- "title": what ${term} is, in one short statement (spell out an abbreviation).
+- "body": 3-5 sentences: what it is, why it exists, and how it connects to ${topic}. Explain every other technical term you use.
+- "example": one concrete case.
+- "terms": up to 3 other terms in your lesson that the learner may not know.
+- "cards": 1 flashcard that tests the main idea.
+${context ? `\nThe lesson where the learner met it:\n${context}\n` : ''}
+Reply with ONLY a JSON array with one lesson:
+[{"topic": "${topic}", "title": "...", "body": "...", "example": "...", "terms": ["..."], "cards": [{"front": "...", "back": "...", "choices": ["...", "...", "...", "..."], "answer": 0}]}]`
+}
+
+/** The ask for a lesson that teaches the idea behind a flashcard or quiz question in depth. */
+export function teachPrompt(card: { topic: string; front: string; back: string; choices: string[] }): string {
+  return `A learner is practising this flashcard on "${card.topic}" and wants to understand the idea behind it.
+
+Question: ${card.front}
+Answer: ${card.back}${card.choices.length > 0 ? `\nQuiz choices: ${card.choices.join(' | ')}` : ''}
+
+Write ONE lesson that teaches the idea in depth:
+- "title": the idea as a short statement.
+- "body": 3-5 sentences: how it works, why it is true, and what goes wrong without it.${card.choices.length > 0 ? ' Say briefly why the wrong choices are wrong.' : ''}
+- "example": one concrete case: a command, a number, a query or a failure.
+- "terms": up to 3 terms in your lesson that the learner may not know.
+- "cards": 1 new flashcard that goes one step further. Do not repeat the question above.
+
+Reply with ONLY a JSON array with one lesson:
+[{"topic": "${card.topic}", "title": "...", "body": "...", "example": "...", "terms": ["..."], "cards": [{"front": "...", "back": "...", "choices": ["...", "...", "...", "..."], "answer": 0}]}]`
 }

@@ -80,6 +80,10 @@ import { pickInsight, statusLine } from './insight'
 import { attributeChat, chatLabel, duration, studyMs, topicUsage } from './usage'
 import {
   LESSONS_PER_CALL,
+  addSubtopic,
+  cleanTerm,
+  teachPrompt,
+  termPrompt,
   cardLesson,
   findLesson,
   isCardLesson,
@@ -119,6 +123,7 @@ const lessonNow = atom({ plugin: 'maxlearn', key: 'lessonNow' } as const, null a
 const chatRuns = atom({ plugin: 'maxlearn', key: 'chatRuns' } as const, {} as Record<string, string>)
 const chatSessions = atom({ plugin: 'maxlearn', key: 'chatSessions' } as const, [] as ChatSession[])
 const learnTime = atom({ plugin: 'maxlearn', key: 'learnTime' } as const, {} as Record<string, number>)
+const subtopics = atom({ plugin: 'maxlearn', key: 'subtopics' } as const, {} as Record<string, string[]>)
 const session = atom({ plugin: 'maxlearn', key: 'session' } as const, {
   reviewed: 0,
   correct: 0,
@@ -218,11 +223,18 @@ async function startInsights($: $, pace: InsightPace) {
   insightTimer = $.clock.every(ms, () => void rotateInsight($))
 }
 
-async function addCards($: $, text: string, source: Card['source']): Promise<number> {
+/**
+ * Adds the model's cards. Quiz questions (`isQuizReady`) must have choices and
+ * are ready at once: answering a multiple-choice question is their first look.
+ */
+async function addCards($: $, text: string, source: Card['source'], isQuizReady = false): Promise<number> {
   const now = await $.clock.now()
   let added = 0
   await saveDeck($, cards => {
-    const fresh = parseCards(text, cards, source, now)
+    const parsed = parseCards(text, cards, source, now)
+    const fresh = isQuizReady
+      ? parsed.filter(c => c.choices.length > 0).map(c => ({ ...c, learnedAt: now, due: now }))
+      : parsed
     added = fresh.length
     return [...cards, ...fresh]
   })
@@ -345,7 +357,7 @@ async function recentChat($: $): Promise<string> {
   return lines.join('\n\n')
 }
 
-export async function fromInterest($: $, topic: string): Promise<number> {
+export async function fromInterest($: $, topic: string, kind: 'cards' | 'quiz' = 'cards'): Promise<number> {
   await stampAuto($, topic)
   const now = await $.clock.now()
   const cards = await read($, deck)
@@ -371,18 +383,18 @@ export async function fromInterest($: $, topic: string): Promise<number> {
     maxTokens: 4096,
     timeoutMs: 120_000,
     effort: 'high',
-    prompt: `Write flashcards on "${topic}" for ${LEVEL_BRIEF[level]}. Set "topic" to "${topic}".
-
+    prompt: `Write ${kind === 'quiz' ? 'multiple-choice quiz questions' : 'flashcards'} on "${topic}" for ${LEVEL_BRIEF[level]}. Set "topic" to "${topic}".
+${kind === 'quiz' ? '\nEvery card MUST have 4 "choices" and the right "answer" index. Make the "back" explain why the answer is right.\n' : ''}
 Draft 6 candidate cards in your head. Check each against the rubric below. Reply with only the 3 best.
 ${known === '' ? '' : `\nThe learner already has these cards. Do not repeat them; go deeper or cover a different part of ${topic}:\n${known}\n`}
 ${CARD_SHAPE}`,
   })
-  return reply.isAnswered ? addCards($, reply.text, 'interest') : 0
+  return reply.isAnswered ? addCards($, reply.text, 'interest', kind === 'quiz') : 0
 }
 
 // Requests made while cards are being written wait here, one per label, and
 // run in turn. Module state: a reload drops the queue with the work in flight.
-type Noun = 'card' | 'lesson' | 'simpler lesson'
+type Noun = 'card' | 'lesson' | 'simpler lesson' | 'quiz question'
 const queue: { label: string; work: () => Promise<number>; isAuto: boolean; noun: Noun; lessonId?: string }[] = []
 
 /** Runs generation off the current dispatch so a turn never waits on it; one at a time, the rest queued. */
@@ -468,10 +480,11 @@ A lesson teaches ONE idea a learner can use: the mechanism, why it matters, and 
 - "title": the idea as a short statement, not a question.
 - "body": 3-5 sentences.
 - "example": one concrete case: a command, a number, a query or a failure.
+- "terms": up to 4 technical terms or abbreviations in your lesson that this learner may not know (for example "DDL", "MVCC").
 - "cards": 1 or 2 flashcards that test exactly what the lesson taught.
 
 Reply with ONLY a JSON array, no prose:
-[{"topic": "...", "title": "...", "body": "...", "example": "...", "cards": [${CARD_ITEM}]}]
+[{"topic": "...", "title": "...", "body": "...", "example": "...", "terms": ["..."], "cards": [${CARD_ITEM}]}]
 
 ${CARD_RUBRIC}
 
@@ -592,6 +605,77 @@ async function simplifyLesson($: $, id: string): Promise<number> {
 }
 
 /** Reading a lesson is learning it: its card is marked learned, or its cards join the deck. */
+// ── Explain a term ──
+
+/**
+ * Explains a term met in a lesson: one call writes a short lesson on it, shown
+ * at once; the lesson it came from comes back next. The term is filed as a
+ * subtopic of the lesson's topic.
+ */
+async function explainTerm($: $, raw: string, fromId?: string | null, inTopic?: string) {
+  const term = cleanTerm(raw)
+  if (term === undefined) {
+    $.ui.toast('Type or select one term to explain, up to 40 characters.')
+    return
+  }
+  const from = fromId && fromId !== PENDING ? findLesson(fromId, await read($, deck), await read($, lessons)) : undefined
+  const topic = from?.topic ?? inTopic ?? normTopic(term)
+  // The lesson being read waits at the front of the line; the learn tab shows the spinner.
+  if (from !== undefined) {
+    const queued = await update($, lessonQueue, q => [from.id, ...q.filter(id => id !== from.id)])
+    await $.store.set('lessonQueue', queued)
+  }
+  await update($, view, (v): View => ({ ...v, mode: 'learn', isRevealed: false }))
+  await update($, lessonNow, () => PENDING)
+  generate($, term, () => writeTermLesson($, term, topic, from), false, 'lesson')
+}
+
+async function writeTermLesson($: $, term: string, topic: string, from: Lesson | undefined): Promise<number> {
+  const context = from && `${from.title}\n${from.body}`
+  const reply = await $.model.complete({
+    model: (await read($, settings)).interestModel,
+    maxTokens: 2048,
+    timeoutMs: 90_000,
+    prompt: `${termPrompt(term, topic, context)}\n\n${CARD_RUBRIC}\n\n${STE_RULES}`,
+  })
+  const now = await $.clock.now()
+  const [lesson] = reply.isAnswered ? parseLessons(reply.text, await read($, deck), await read($, lessons), now) : []
+  if (lesson === undefined) {
+    // Nothing usable: hand the learn tab back the lesson it came from.
+    if ((await read($, lessonNow)) === PENDING) await update($, lessonNow, () => null)
+    await fillWaiting($)
+    if ((await read($, lessonNow)) === null) await update($, lessonNow, () => (from ? from.id : null))
+    $.ui.toast(`Could not explain "${term}" this time.`)
+    return 0
+  }
+  const explained: Lesson = {
+    ...lesson,
+    topic,
+    subtopic: term,
+    cards: lesson.cards.map(c => ({ ...c, topic, subtopic: term })),
+  }
+  const all = await update($, lessons, list => [...list, explained].slice(-100))
+  await $.store.set('lessons', all)
+  const map = await update($, subtopics, m => addSubtopic(m, topic, term))
+  await $.store.set('subtopics', map)
+  if ((await read($, lessonNow)) === PENDING) await update($, lessonNow, () => explained.id)
+  else {
+    const queued = await update($, lessonQueue, q => [explained.id, ...q])
+    await $.store.set('lessonQueue', queued)
+  }
+  return 1
+}
+
+/** `w`: explains what the learner selected with the mouse (fullscreen terminal). */
+async function explainSelection($: $, fromId: string | null) {
+  const selected = await $.ui.selection()
+  if (selected === undefined || selected.text.trim() === '') {
+    $.ui.toast('Select a word with the mouse first, or type it in the Explain field.')
+    return
+  }
+  await explainTerm($, selected.text, fromId)
+}
+
 async function markLearned($: $, id: string | null | undefined) {
   if (!id || id === PENDING) return
   const lesson = findLesson(id, await read($, deck), await read($, lessons))
@@ -606,12 +690,57 @@ async function markLearned($: $, id: string | null | undefined) {
 }
 
 /** The learn tab's Next (`isLearned`) or skip: learn the one shown only on Next, then show the next (writing two when none waits). */
+/** Teach me: a lesson on the idea behind a flashcard or quiz question, shown now; Next goes back. */
+async function teachCard($: $, card: Card, returnTo: Mode) {
+  const shown = await read($, lessonNow)
+  if (shown !== null && shown !== PENDING) {
+    const queued = await update($, lessonQueue, q => [shown, ...q.filter(id => id !== shown)])
+    await $.store.set('lessonQueue', queued)
+  }
+  await update($, view, (): View => ({ mode: 'learn', isRevealed: false, returnTo }))
+  await update($, lessonNow, () => PENDING)
+  generate($, card.topic, () => writeTeachLesson($, card), false, 'lesson')
+}
+
+async function writeTeachLesson($: $, card: Card): Promise<number> {
+  const reply = await $.model.complete({
+    model: (await read($, settings)).interestModel,
+    maxTokens: 2048,
+    timeoutMs: 90_000,
+    prompt: `${teachPrompt(card)}\n\n${CARD_RUBRIC}\n\n${STE_RULES}`,
+  })
+  const now = await $.clock.now()
+  const [lesson] = reply.isAnswered ? parseLessons(reply.text, await read($, deck), await read($, lessons), now) : []
+  if (lesson === undefined) {
+    if ((await read($, lessonNow)) === PENDING) await update($, lessonNow, () => null)
+    const back = (await read($, view)).returnTo
+    if (back !== undefined) await setMode($, back)
+    $.ui.toast('Could not write that lesson this time.')
+    return 0
+  }
+  const taught: Lesson = { ...lesson, topic: card.topic, fromCard: card.id, cards: lesson.cards.map(c => ({ ...c, topic: card.topic })) }
+  const all = await update($, lessons, list => [...list, taught].slice(-100))
+  await $.store.set('lessons', all)
+  if ((await read($, lessonNow)) === PENDING) await update($, lessonNow, () => taught.id)
+  else {
+    const queued = await update($, lessonQueue, q => [taught.id, ...q])
+    await $.store.set('lessonQueue', queued)
+  }
+  return 1
+}
+
 async function nextOnLearnTab($: $, isLearned: boolean) {
   // Skipped, a card lesson stays to learn; a written lesson is let go and its cards never join.
   const current = await read($, lessonNow)
   if (isLearned) await markLearned($, current)
   else if (current !== null && isCardLesson(current)) skippedCards.add(current)
   await update($, lessonNow, () => null)
+  const { returnTo } = await read($, view)
+  if (returnTo !== undefined) {
+    // A Teach-me lesson read: back to the review or quiz it came from.
+    await setMode($, returnTo)
+    return
+  }
   const next = await takeNextLesson($, true)
   await update($, lessonNow, () => next ?? null)
 }
@@ -668,7 +797,7 @@ async function finishWelcome($: $) {
 /** Every stored key but the settings: what Start over clears. */
 const RESET_KEYS = [
   'deck', 'reviews', 'lessons', 'lessonQueue', 'interests', 'chatTopics', 'chatSessions',
-  'learnTime', 'autoAt', 'simpler', 'milestones', 'onboarded',
+  'learnTime', 'autoAt', 'simpler', 'milestones', 'onboarded', 'subtopics',
 ]
 
 /**
@@ -688,6 +817,7 @@ async function resetAll($: $) {
   await update($, chatTopics, () => ({}))
   await update($, chatSessions, () => [])
   await update($, learnTime, () => ({}))
+  await update($, subtopics, () => ({}))
   await update($, lastAnswer, () => null)
   await update($, session, s => ({ reviewed: 0, correct: 0, startedAt: s.startedAt }))
   insightId = undefined
@@ -773,6 +903,7 @@ export async function readInsights($: $) {
     busy: await read($, generating),
     settings: await read($, settings),
     chats: await read($, chatSessions),
+    subtopics: await read($, subtopics),
     usage: topicUsage(await read($, chatSessions), log, await read($, learnTime)),
   }
 }
@@ -1125,6 +1256,7 @@ function ReviewCard($: $, d: Draw, card: Card, v: View, now: number, opts: Sched
         <Box flexDirection="column" gap={1}>
           <Text wrap="wrap">{card.back}</Text>
           <Box gap={1} flexWrap="wrap">
+            <Button key="teach" label="Teach me" hotkey="t" dimColor onPress={() => teachCard($, card, 'review')} />
             {GRADES.map(([g, key]) => {
               const wait = shortWait(previewInterval(card, g, now, opts))
               return (
@@ -1171,7 +1303,10 @@ function QuizCard($: $, d: Draw, card: Card, v: View) {
           <Text dimColor wrap="wrap">
             {card.back}
           </Text>
-          <Button key="next" label="Next" hotkey="l" variant="primary" autoFocus onPress={() => runKey($, { type: 'next' }, card)} />
+          <Box gap={1}>
+            <Button key="next" label="Next" hotkey="l" variant="primary" autoFocus onPress={() => runKey($, { type: 'next' }, card)} />
+            <Button key="teach" label="Teach me" hotkey="t" onPress={() => teachCard($, card, 'quiz')} />
+          </Box>
         </Box>
       ) : (
         <Box flexDirection="column">
@@ -1410,16 +1545,29 @@ function TipLine($: $, d: Draw, v: View, i: Insights) {
 }
 
 /** The next things to do when no card is due: a weak topic's cards, or cards from chat. */
-function NextSteps($: $, d: Draw, i: Insights) {
+function NextSteps($: $, d: Draw, i: Insights, kind: 'cards' | 'quiz' = 'cards') {
   const { Box, Button, Text } = d.ui
-  const topic = i.improve[0]?.topic ?? i.work.find(w => w.isThin)?.topic ?? i.savedInterests[0]
+  // Weakest first, then this week's thin work topics, then interests: four at most.
+  const topics = [...new Set([...i.improve.map(t => t.topic), ...i.work.filter(w => w.isThin).map(w => w.topic), ...i.savedInterests])].slice(0, 4)
   return (
     <Box flexDirection="column" gap={1}>
+      {topics.length > 0 && (
+        <Text dimColor wrap="wrap">
+          {kind === 'quiz' ? 'Write 3 quiz questions, ready now, on:' : 'Write 3 flashcards (you learn them first) on:'}
+        </Text>
+      )}
       <Box gap={1} flexWrap="wrap">
-        {topic !== undefined && (
-          <Button key="next-topic" label={`+3 ${topic}`} variant="primary" onPress={() => generate($, topic, () => fromInterest($, topic))} />
+        {topics.map((topic, n) => (
+          <Button
+            key={n === 0 ? 'next-topic' : `next-topic-${topic}`}
+            label={`+ ${topic}`}
+            variant={n === 0 ? 'primary' : undefined}
+            onPress={() => generate($, topic, () => fromInterest($, topic, kind), false, kind === 'quiz' ? 'quiz question' : 'card')}
+          />
+        ))}
+        {kind === 'cards' && (
+          <Button key="next-chat" label="from this chat" onPress={() => generate($, 'this chat', () => fromChat($))} />
         )}
-        <Button key="next-chat" label="cards from chat" onPress={() => generate($, 'this chat', () => fromChat($))} />
       </Box>
       {i.savedInterests.length === 0 && (
         <Text dimColor wrap="wrap">
@@ -1555,7 +1703,8 @@ function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, 
         'lesson',
         <Box flexDirection="column" gap={1}>
           <Text dimColor>
-            📖 {lesson.topic} · {isCard ? 'new card' : 'lesson'}
+            📖 {lesson.topic}
+            {lesson.subtopic !== undefined ? ` › ${lesson.subtopic}` : ''} · {isCard ? 'new card' : lesson.subtopic !== undefined ? 'term' : 'lesson'}
           </Text>
           <Text bold wrap="wrap">
             {lesson.title}
@@ -1565,6 +1714,14 @@ function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, 
             <Text dimColor wrap="wrap">
               e.g. {lesson.example}
             </Text>
+          )}
+          {(lesson.terms ?? []).length > 0 && (
+            <Box gap={1} flexWrap="wrap">
+              <Text dimColor>New words?</Text>
+              {(lesson.terms ?? []).map(term => (
+                <Button key={`term-${term}`} label={`${term}?`} dimColor onPress={() => explainTerm($, term, lesson.id)} />
+              ))}
+            </Box>
           )}
           <Text dimColor wrap="wrap">
             {joins}
@@ -1579,7 +1736,19 @@ function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, 
               dimColor
               onPress={() => (busy?.lessonId === lesson.id ? undefined : simplify($, lesson.id))}
             />
+            {d.surface === 'terminal' && (
+              <Button key="explain-selection" label="Explain selection" hotkey="w" dimColor onPress={() => explainSelection($, lesson.id)} />
+            )}
           </Box>
+          {d.ui.Input && (
+            <d.ui.Input
+              key="explain-term"
+              label="Explain: "
+              placeholder="paste or type a term, e.g. MVCC"
+              submitLabel="explain"
+              onSubmit={(value: string) => explainTerm($, value, lesson.id)}
+            />
+          )}
         </Box>,
       )}
       {waiting > 0 && (
@@ -1622,7 +1791,7 @@ export function StudyTab($: $, d: Draw, v: View, card: Card | undefined, i: Insi
       )}
       {isDone && <Text>{sessionSummary(tally, i.overview)}</Text>}
       {nextLine !== '' && <Text dimColor>{nextLine}</Text>}
-      {NextSteps($, d, i)}
+      {NextSteps($, d, i, v.mode === 'quiz' ? 'quiz' : 'cards')}
     </Box>,
   )
 }
@@ -1714,6 +1883,25 @@ function topicRow(d: Draw, i: Insights, r: { topic: string; mastery: number; rea
   )
 }
 
+/** Saved interests as chips: pressing one writes 2 lessons on it and opens learn; `+ add` goes to the field. */
+function InterestChips($: $, d: Draw, i: Insights) {
+  const { Box, Text, Button } = d.ui
+  return (
+    <Box gap={1} flexWrap="wrap">
+      <Text>Interests</Text>
+      {i.savedInterests.length === 0 && <Text dimColor>none yet</Text>}
+      {i.savedInterests.map(topic => (
+        <Button
+          key={`interest-chip-${topic}`}
+          label={(i.subtopics[topic] ?? []).length > 0 ? `${topic} · ${(i.subtopics[topic] ?? []).length}` : topic}
+          onPress={() => addInterest($, topic)}
+        />
+      ))}
+      <Button key="interest-chip-add" label="+ add" dimColor onPress={() => setMode($, 'add')} />
+    </Box>
+  )
+}
+
 /** Three numbers side by side with room, one per row without. */
 function StatTiles(d: Draw, tiles: [string, string][]) {
   const { Box, Text } = d.ui
@@ -1759,9 +1947,7 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
       o.totalCards === 0 ? (
         <Box flexDirection="column" gap={1}>
           {i.busy !== null && <Text>⟳ Writing {i.busy.noun ?? 'card'}s {writingWhat(i.busy.label)}…</Text>}
-          <Text>
-            Interests: {i.savedInterests.length === 0 ? <Text dimColor>none yet</Text> : i.savedInterests.join(', ')}
-          </Text>
+          {InterestChips($, d, i)}
           <Text dimColor wrap="wrap">
             Trends show up once you learn and review a few cards.
           </Text>
@@ -1776,6 +1962,7 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
           <Text>
             {o.reviewsToday} today · {o.dueNow} due
           </Text>
+          {InterestChips($, d, i)}
           {isRoomy(d) ? (
             Heatmap(d, i)
           ) : (
@@ -1827,6 +2014,27 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
             ))
           ),
         )}
+        {Object.keys(i.subtopics).length > 0 &&
+          section(
+            d,
+            'subtopics',
+            'Subtopics you explored',
+            <Box flexDirection="column" gap={1}>
+              {Object.entries(i.subtopics).map(([topic, terms]) => (
+                <Box key={`sub-${topic}`} gap={1} flexWrap="wrap">
+                  <Text bold>{topic}</Text>
+                  {terms.map(term => (
+                    <Button
+                      key={`sub-${topic}-${term}`}
+                      label={`+ ${term}`}
+                      dimColor
+                      onPress={() => explainTerm($, term, undefined, topic)}
+                    />
+                  ))}
+                </Box>
+              ))}
+            </Box>,
+          )}
         {section(
           d,
           'time',
@@ -2159,6 +2367,8 @@ export const register: Register = on => {
     await update($, reviews, () => savedReviews)
     const savedChats = ((await $.store.get('chatSessions')) as ChatSession[] | undefined) ?? []
     await update($, chatSessions, () => savedChats)
+    const savedSubtopics = ((await $.store.get('subtopics')) as Record<string, string[]> | undefined) ?? {}
+    await update($, subtopics, () => savedSubtopics)
     const savedLearnTime = ((await $.store.get('learnTime')) as Record<string, number> | undefined) ?? {}
     await update($, learnTime, () => savedLearnTime)
     const savedLessons = ((await $.store.get('lessons')) as Lesson[] | undefined) ?? []
@@ -2335,6 +2545,18 @@ export const register: Register = on => {
             label={busy?.lessonId === lesson.id ? '⟳ Simplifying…' : 'Simplify'}
             onPress={() => (busy?.lessonId === lesson.id ? undefined : simplify($, lesson.id))}
           />
+          {(lesson.terms ?? []).map(term => (
+            <Button
+              key={`chat-term-${run}-${term}`}
+              label={`${term}?`}
+              dimColor
+              onPress={async () => {
+                // The explanation opens on the learn tab; this row keeps its lesson.
+                await explainTerm($, term, lesson.id)
+                await $.ui.open({ id: PANE, title: TITLE, closeOnEscape: true })
+              }}
+            />
+          ))}
           <Text dimColor>
             {isCard ? 'Next adds this card to your review.' : `Next adds ${lesson.cards.length} card${lesson.cards.length === 1 ? '' : 's'} to your review.`}
           </Text>

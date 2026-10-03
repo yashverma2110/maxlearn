@@ -180,7 +180,7 @@ test('adding an interest shows at once and queues two lessons on it', async ($, 
   expect(prompts[0]).toContain('Write ALL text ("title", "body", "example"')
   await ui.press({ key: 'tab-progress' })
   await ui.press({ key: 'ins-overview' })
-  expect(await ui.find({ text: /Interests: redis/ })).toBeDefined()
+  expect((await ui.find({ key: 'interest-chip-redis' }))?.props.label).toBe('redis')
   expect(await ui.find({ text: /Writing lessons on redis/ })).toBeDefined()
   const stats = (await $.command.run({ command: 'study', args: 'stats' } as never)) as { text: string }
   expect(stats.text).toContain('Interests: redis')
