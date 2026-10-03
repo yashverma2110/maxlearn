@@ -134,3 +134,60 @@ test('the full overview shows the interest chips too', async ($, on) => {
   expect(await ui.find({ key: 'interest-chip-postgres' })).toBeDefined()
   await ui.unmount()
 })
+
+test('a failed explanation says so once, and hands back the lesson it came from', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off' }, onboarded: true })
+  const toasts: string[] = []
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async (_$: unknown, e: { text: string }) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', async (_$: unknown, e: { prompt: string }) => ({
+    value: { isAnswered: true as const, text: e.prompt.includes('met the term') ? 'sorry, no JSON' : LESSON, usage: USAGE },
+  }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await $.command.run({ command: 'study', args: 'postgres' } as never)
+  for (let n = 0; n < 5; n++) await clock.advance(10)
+  toasts.length = 0
+
+  await ui.press({ key: 'term-MVCC' })
+  for (let n = 0; n < 5; n++) await clock.advance(10)
+  expect(toasts).toEqual(['Could not explain "MVCC" this time.'])
+  expect(await ui.find({ text: /queued ALTER TABLE/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a working explanation shows no failure toast', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off' }, onboarded: true })
+  const toasts: string[] = []
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async (_$: unknown, e: { text: string }) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', async (_$: unknown, e: { prompt: string }) => ({
+    value: { isAnswered: true as const, text: e.prompt.includes('met the term') ? TERM : LESSON, usage: USAGE },
+  }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await $.command.run({ command: 'study', args: 'postgres' } as never)
+  for (let n = 0; n < 5; n++) await clock.advance(10)
+  toasts.length = 0
+  await ui.press({ key: 'term-MVCC' })
+  for (let n = 0; n < 5; n++) await clock.advance(10)
+  expect(toasts.some(t => /Could not|No new/.test(t))).toBe(false)
+  expect(toasts).toEqual(['📚 1 new lesson on MVCC'])
+  await ui.unmount()
+})

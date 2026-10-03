@@ -64,6 +64,8 @@ The first time, a **welcome** screen asks two things:
 maxlearn writes your first two lessons right away; the line under the input shows `⟳ Writing lessons…` while it works. Changed your mind later? Add an interest with `/study <topic>`, change **Experience** in settings, or run `/study welcome` again.
 
 ### 3. Learn
+The tabs sit at the top of the pane: **learn · review · quiz · insights · more · settings**. Under them, on learn, review and quiz, pick **all**, **from interests** or **from chats** to study only what came from there. Each shows how many items are waiting.
+
 The **learn** tab (`e`) shows one lesson at a time: the idea, why it matters, and an example.
 
 - **Next** (`enter`) adds the lesson's cards to your review. Their first review comes 10 minutes later.
@@ -193,7 +195,7 @@ It reads no files and runs no commands. Nothing leaves your machine except the m
 
 ```sh
 claude plugin validate .
-claude plugin test .     # 94 tests
+claude plugin test .     # 101 tests
 ```
 
 The code is split into pure modules (`srs`, `fsrs`, `analytics`, `usage`, `lessons`, `prompts`, `keymap`, `layout`, `tips`, `auto`, `insight`) and one hooks module (`register.tsx`) that holds everything touching Claude Code's engine.

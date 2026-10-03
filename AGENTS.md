@@ -51,7 +51,8 @@ These cost real time to discover. Break one and `claude plugin validate` fails o
 - **The focus ring:** `ui.focus` hook refuses moves onto engine stops (keeps keys in the pane); `focusMain` puts the ring on the main button after each action; `moveRing` walks `ringOrder` (computed at draw time) for i/j/k/l off the card tabs.
 - **Esc can't be caught.** Every `$.ui.open` passes `closeOnEscape: true`.
 - **Footer differs per surface:** the terminal gets a rule plus an inverted-T key map, which aligns in monospace. Desktop, VS Code and mobile get one framed block, because a proportional font breaks drawn rules and space-padding.
-- **Layout:** content on top (centered on study tabs with flexGrow spacers), footer pinned at the bottom via `minHeight = scroll.bodyRows`. Height-only resizes don't redraw.
+- **Layout:** global tabs on top (`TopBar`), then on learn/review/quiz the source filter (`FilterRow`: all · from interests · from chats, shared through `View.from`); content in the middle (centered on study tabs with flexGrow spacers); the footer (keys only, no tabs) pinned at the bottom via `minHeight = scroll.bodyRows`. Height-only resizes don't redraw.
+- **Sources:** cards carry `source` ('chat' | 'interest'); lessons carry `source` (default interest), card lessons use their card's, and Explain/Teach-me lessons and their cards inherit theirs. `fromMatches`/`lessonSource` in `lessons.ts`; `takeQueued(from)` takes the first matching queued lesson.
 - **The status line** is capped at 72 characters (`insight.ts` `statusLine`) and never shows a due card's answer.
 
 ## Product decisions (and why)
@@ -76,9 +77,11 @@ A new setting needs: the type in `StudySettings`, a default in `DEFAULT_SETTINGS
 claude --plugin-dir ~/projects/maxlearn      # load and watch this folder for a session
 claude plugin validate .claude-plugin/plugin.json --strict   # plugin + hooks
 claude plugin validate . --strict            # with marketplace.json present, checks the marketplace
-claude plugin test .                         # all *.test.ts (94 at 0.4.1)
+claude plugin test .                         # all *.test.ts (101 at 0.5.0)
 tsc -p .                                     # once the plugin has loaded once (it writes .claude-plugin/types/)
 ```
+
+**Never run two copies.** If `maxlearn@yashverma` is installed (check `enabledPlugins` in `~/.claude/settings.json`) and a dev copy is also loaded (`--plugin-dir`, a dev-mods link, `CLAUDE_CODE_PLUGIN_DIRS`), both run: two `/study` commands, two panes named "maxlearn", double automatic model calls, and **separate stores** (`~/.claude/plugins/store/maxlearn_<source>-<hash>.json`), so each copy's data looks missing to the other, and its errors look like ghosts. To develop, disable the installed one in `/plugin` first. A plugin cannot detect another copy of itself (there is no plugin-listing API).
 
 Caveat: a session's dev-mods folder (`~/.claude/dev-mods/<session>/`) hot-reloads only real folders. A **symlink** into it loads once and doesn't pick up later edits; recreate the link to reload. Prefer `--plugin-dir`, or `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` `env`, which loads in every session. Don't also install it from a marketplace, or two copies load.
 

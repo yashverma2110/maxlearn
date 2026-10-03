@@ -136,7 +136,10 @@ test('every surface at both widths: header, grade intervals, summary, insights, 
   const cardAt = tree.indexOf('"borderStyle":"round"')
   expect(cardAt).toBeGreaterThan(-1)
   expect(cardAt).toBeLessThan(tree.indexOf('Why VACUUM'))
-  for (const footerKey of ['"key":"undo"', '"key":"tab-review"', '"key":"drop"']) {
+  // Tabs and the source filter on top, the card in the middle, the keys in the footer.
+  expect(tree.indexOf('"key":"tab-review"')).toBeLessThan(cardAt)
+  expect(tree.indexOf('"key":"from-chats"')).toBeLessThan(cardAt)
+  for (const footerKey of ['"key":"undo"', '"key":"drop"']) {
     expect(tree.indexOf(footerKey)).toBeGreaterThan(tree.indexOf('"key":"grade-easy"'))
   }
   // The active tab is bright, the rest dim: no marker needed.
@@ -149,12 +152,14 @@ test('every surface at both widths: header, grade intervals, summary, insights, 
   const root = (await ui.drawn()) as El
   const kids = root.children.filter(Boolean)
   expect(root.props.minHeight).toBe(60)
-  // Spacer, card, spacer, footer: the card in the middle, the footer at the bottom.
-  expect(kids[0]?.props.key).toBe('space-above')
-  expect(kids[0]?.props.flexGrow).toBe(1)
-  expect(JSON.stringify(kids[1])).toContain('"borderStyle":"round"')
-  expect(kids[2]?.props.key).toBe('space-below')
-  expect(JSON.stringify(kids.at(-1))).toContain('"key":"tab-review"')
+  // Tabs on top, then spacer, card, spacer, footer: the card in the middle, the footer at the bottom.
+  expect(kids[0]?.props.key).toBe('top')
+  expect(JSON.stringify(kids[0])).toContain('"key":"tab-learn"')
+  expect(kids[1]?.props.key).toBe('space-above')
+  expect(kids[1]?.props.flexGrow).toBe(1)
+  expect(JSON.stringify(kids[2])).toContain('"borderStyle":"round"')
+  expect(kids[3]?.props.key).toBe('space-below')
+  expect(JSON.stringify(kids.at(-1))).not.toContain('"key":"tab-review"') // tabs live on top now
   expect(JSON.stringify(kids.at(-1))).toContain('── Shortcuts ──')
   await ui.press({ key: 'grade-good' })
   expect(await ui.find({ text: /Session done/ })).toBeDefined()

@@ -15,6 +15,7 @@ import type {
   InterestModel,
   LastAnswer,
   Retention,
+  LearnFrom,
   Lesson,
   Mode,
   ReviewEvent,
@@ -82,6 +83,8 @@ import {
   LESSONS_PER_CALL,
   addSubtopic,
   cleanTerm,
+  fromMatches,
+  lessonSource,
   teachPrompt,
   termPrompt,
   cardLesson,
@@ -392,6 +395,9 @@ ${CARD_SHAPE}`,
   return reply.isAnswered ? addCards($, reply.text, 'interest', kind === 'quiz') : 0
 }
 
+/** A work's result when it already toasted its own failure. */
+const REPORTED = -1
+
 // Requests made while cards are being written wait here, one per label, and
 // run in turn. Module state: a reload drops the queue with the work in flight.
 type Noun = 'card' | 'lesson' | 'simpler lesson' | 'quiz question'
@@ -417,7 +423,9 @@ export function generate($: $, label: string, work: () => Promise<number>, isAut
     try {
       const n = await work()
       const auto = isAuto ? ' (auto)' : ''
-      if (n > 0) $.ui.toast(`📚 ${n} new ${noun}${n === 1 ? '' : 's'} ${writingWhat(label)}${auto}`)
+      if (n === REPORTED) {
+        // The work already said what went wrong: one toast, not two.
+      } else if (n > 0) $.ui.toast(`📚 ${n} new ${noun}${n === 1 ? '' : 's'} ${writingWhat(label)}${auto}`)
       else if (!isAuto) $.ui.toast(`📚 No new ${noun}s ${writingWhat(label)}`)
     } finally {
       spinner.cancel()
@@ -444,7 +452,7 @@ async function lessonCandidates($: $): Promise<string[]> {
  * One model call that writes `LESSONS_PER_CALL` lessons, each with its cards:
  * the first goes to whoever is waiting, the rest wait for the next Next.
  */
-async function writeLessons($: $, aim?: string[]): Promise<number> {
+async function writeLessons($: $, aim?: string[], source: 'interest' | 'chat' = 'interest'): Promise<number> {
   const known = await read($, lessons)
   const topics = aim ?? lessonTopics(await lessonCandidates($), known)
   if (topics.length === 0) {
@@ -493,7 +501,7 @@ ${CARD_RUBRIC}
 ${STE_RULES}`,
   })
   if (!reply.isAnswered) return 0
-  const fresh = parseLessons(reply.text, cards, known, now)
+  const fresh = parseLessons(reply.text, cards, known, now).map(l => ({ ...l, source, cards: l.cards.map(c => ({ ...c, source })) }))
   if (fresh.length === 0) return 0
   const all = await update($, lessons, list => [...list, ...fresh].slice(-100))
   await $.store.set('lessons', all)
@@ -506,7 +514,7 @@ ${STE_RULES}`,
 /** Hands queued lessons to the learn tab and the chat rows waiting for one. */
 async function fillWaiting($: $) {
   if ((await read($, lessonNow)) === PENDING) {
-    const id = await takeQueued($)
+    const id = await takeQueued($, (await read($, view)).from)
     if (id !== undefined) await update($, lessonNow, () => id)
   }
   const runs = await read($, chatRuns)
@@ -518,12 +526,38 @@ async function fillWaiting($: $) {
   }
 }
 
-async function takeQueued($: $): Promise<string | undefined> {
-  const [first, ...rest] = await read($, lessonQueue)
-  if (first === undefined) return undefined
+/** Takes the first queued lesson the filter shows; the rest keep their order. */
+async function takeQueued($: $, from?: LearnFrom): Promise<string | undefined> {
+  const queue = await read($, lessonQueue)
+  const cards = await read($, deck)
+  const known = await read($, lessons)
+  const at = queue.findIndex(id => {
+    const lesson = findLesson(id, cards, known)
+    return lesson !== undefined && fromMatches(lessonSource(lesson, cards), from)
+  })
+  if (at < 0) return undefined
+  const rest = queue.filter((_, n) => n !== at)
   await update($, lessonQueue, () => rest)
   await $.store.set('lessonQueue', rest)
-  return first
+  return queue[at]
+}
+
+/** Lessons and cards waiting to be learned under each filter. */
+async function learnCounts($: $): Promise<Record<LearnFrom, number>> {
+  const cards = await read($, deck)
+  const known = await read($, lessons)
+  const sources = [
+    ...cards.filter(isToLearn).map(c => c.source),
+    ...(await read($, lessonQueue)).map(id => {
+      const lesson = findLesson(id, cards, known)
+      return lesson === undefined ? undefined : lessonSource(lesson, cards)
+    }),
+  ].filter((x): x is 'interest' | 'chat' => x !== undefined)
+  return {
+    all: sources.length,
+    interests: sources.filter(x => x === 'interest').length,
+    chats: sources.filter(x => x === 'chat').length,
+  }
 }
 
 /**
@@ -535,12 +569,12 @@ async function takeQueued($: $): Promise<string | undefined> {
 // every other card and queued lesson has had its turn. Module state.
 const skippedCards = new Set<string>()
 
-async function takeNextLesson($: $, mayWrite: boolean): Promise<string | undefined> {
+async function takeNextLesson($: $, mayWrite: boolean, from?: LearnFrom): Promise<string | undefined> {
   const shown = new Set([await read($, lessonNow), ...Object.values(await read($, chatRuns))].filter((x): x is string => typeof x === 'string'))
-  const cards = await read($, deck)
+  const cards = (await read($, deck)).filter(c => fromMatches(c.source, from))
   const card = nextCardToLearn(cards, new Set([...shown, ...skippedCards]))
   if (card !== undefined) return cardLesson(card).id
-  const queued = await takeQueued($)
+  const queued = await takeQueued($, from)
   if (queued !== undefined) return queued
   // Only skipped cards are left: start them over, oldest first.
   const again = nextCardToLearn(cards, shown)
@@ -549,9 +583,42 @@ async function takeNextLesson($: $, mayWrite: boolean): Promise<string | undefin
     return cardLesson(again).id
   }
   if (!mayWrite) return undefined
-  const [topic] = lessonTopics(await lessonCandidates($), await read($, lessons))
+  const known = await read($, lessons)
+  if (from === 'chats') {
+    // Lessons on what the recent chats touched; none yet means nothing to write from.
+    const topics = lessonTopics((await readInsights($)).work.map(w => w.topic), known)
+    if (topics.length === 0) return undefined
+    generate($, topics.join(' + '), () => writeLessons($, topics, 'chat'), false, 'lesson')
+    return PENDING
+  }
+  if (from === 'interests') {
+    const topics = lessonTopics(await read($, interests), known)
+    if (topics.length === 0) return undefined
+    generate($, topics.join(' + '), () => writeLessons($, topics), false, 'lesson')
+    return PENDING
+  }
+  const [topic] = lessonTopics(await lessonCandidates($), known)
   generate($, topic ?? 'your interests', () => writeLessons($), false, 'lesson')
   return PENDING
+}
+
+/** Changes the source filter; on learn, a lesson the new filter hides goes back in line. */
+async function setFrom($: $, from: LearnFrom) {
+  const v = await update($, view, (x): View => ({ ...x, from, cardId: undefined, isRevealed: false, skipped: undefined }))
+  if (v.mode !== 'learn') return
+  const shown = await read($, lessonNow)
+  if (shown !== null && shown !== PENDING) {
+    const cards = await read($, deck)
+    const lesson = findLesson(shown, cards, await read($, lessons))
+    if (lesson !== undefined && fromMatches(lessonSource(lesson, cards), from)) return
+    if (!isCardLesson(shown)) {
+      const queued = await update($, lessonQueue, q => [shown, ...q.filter(id => id !== shown)])
+      await $.store.set('lessonQueue', queued)
+    }
+  }
+  // Free only: a card to learn or a queued lesson; writing waits for a press.
+  const next = await takeNextLesson($, false, from)
+  await update($, lessonNow, () => next ?? null)
 }
 
 // ── Simplify ──
@@ -648,13 +715,16 @@ async function writeTermLesson($: $, term: string, topic: string, from: Lesson |
     await fillWaiting($)
     if ((await read($, lessonNow)) === null) await update($, lessonNow, () => (from ? from.id : null))
     $.ui.toast(`Could not explain "${term}" this time.`)
-    return 0
+    return REPORTED
   }
+  // An explanation belongs where the lesson it came from belongs.
+  const source = from === undefined ? 'interest' : lessonSource(from, await read($, deck))
   const explained: Lesson = {
     ...lesson,
     topic,
     subtopic: term,
-    cards: lesson.cards.map(c => ({ ...c, topic, subtopic: term })),
+    source,
+    cards: lesson.cards.map(c => ({ ...c, topic, subtopic: term, source })),
   }
   const all = await update($, lessons, list => [...list, explained].slice(-100))
   await $.store.set('lessons', all)
@@ -699,7 +769,7 @@ async function teachCard($: $, card: Card, returnTo: Mode) {
     const queued = await update($, lessonQueue, q => [shown, ...q.filter(id => id !== shown)])
     await $.store.set('lessonQueue', queued)
   }
-  await update($, view, (): View => ({ mode: 'learn', isRevealed: false, returnTo }))
+  await update($, view, (v): View => ({ mode: 'learn', isRevealed: false, returnTo, from: v.from }))
   await update($, lessonNow, () => PENDING)
   generate($, card.topic, () => writeTeachLesson($, card), false, 'lesson')
 }
@@ -718,9 +788,15 @@ async function writeTeachLesson($: $, card: Card): Promise<number> {
     const back = (await read($, view)).returnTo
     if (back !== undefined) await setMode($, back)
     $.ui.toast('Could not write that lesson this time.')
-    return 0
+    return REPORTED
   }
-  const taught: Lesson = { ...lesson, topic: card.topic, fromCard: card.id, cards: lesson.cards.map(c => ({ ...c, topic: card.topic })) }
+  const taught: Lesson = {
+    ...lesson,
+    topic: card.topic,
+    source: card.source,
+    fromCard: card.id,
+    cards: lesson.cards.map(c => ({ ...c, topic: card.topic, source: card.source })),
+  }
   const all = await update($, lessons, list => [...list, taught].slice(-100))
   await $.store.set('lessons', all)
   if ((await read($, lessonNow)) === PENDING) await update($, lessonNow, () => taught.id)
@@ -743,7 +819,7 @@ async function nextOnLearnTab($: $, isLearned: boolean) {
     await setMode($, returnTo)
     return
   }
-  const next = await takeNextLesson($, true)
+  const next = await takeNextLesson($, true, (await read($, view)).from)
   await update($, lessonNow, () => next ?? null)
 }
 
@@ -975,7 +1051,7 @@ export async function saveSettings($: $, change: Partial<StudySettings>) {
 export async function setMode($: $, mode: Mode) {
   if (mode === 'learn' && (await read($, lessonNow)) === null) {
     // Entering is free: a card to learn or a queued lesson; writing waits for a press.
-    const next = await takeNextLesson($, false)
+    const next = await takeNextLesson($, false, (await read($, view)).from)
     if (next !== undefined) await update($, lessonNow, () => next)
   }
   await update($, view, v => ({
@@ -985,6 +1061,7 @@ export async function setMode($: $, mode: Mode) {
     more: v.more,
     isHelp: v.isHelp,
     tipIndex: v.tipIndex,
+    from: v.from,
   }))
 }
 
@@ -997,7 +1074,7 @@ function currentCard(cards: Card[], v: View, now: number, favored: ReadonlySet<s
   const pinned = cards.find(c => c.id === v.cardId)
   if (pinned) return pinned
   const skipped = new Set(v.skipped ?? [])
-  const due = dueCards(cards, now, favored).filter(c => !skipped.has(c.id))
+  const due = dueCards(cards, now, favored).filter(c => !skipped.has(c.id) && fromMatches(c.source, v.from))
   return v.mode === 'quiz' ? due.find(c => c.choices.length > 0) : due[0]
 }
 
@@ -1089,6 +1166,7 @@ function faceDown(v: View): View {
     more: v.more,
     isHelp: v.isHelp,
     tipIndex: v.tipIndex,
+    from: v.from,
   }
 }
 
@@ -1333,6 +1411,46 @@ function schedOptions(s: StudySettings): SchedOptions {
   return { algorithm: s.algorithm, retention: Number(s.retention) }
 }
 
+/** The global tabs, at the top of the pane: the active one bright, the rest dim. */
+function TopBar($: $, d: Draw, v: View) {
+  const { Box, Button } = d.ui
+  return (
+    <Box key="top-bar" gap={1} flexWrap="wrap">
+      {TAB_ORDER.map((mode: Mode) => (
+        <Button
+          key={`tab-${mode}`}
+          label={TAB_LABELS[d.density][mode]}
+          hotkey={TAB_KEYS[mode]}
+          plain
+          dimColor={mode !== v.mode}
+          onPress={() => setMode($, mode)}
+        />
+      ))}
+    </Box>
+  )
+}
+
+const FROM_LABELS: Record<LearnFrom, string> = { all: 'all', interests: 'from interests', chats: 'from chats' }
+
+/** Learn, review and quiz: which source to show, with how many are waiting under each. */
+function FilterRow($: $, d: Draw, v: View, counts: Record<LearnFrom, number>) {
+  const { Box, Button } = d.ui
+  const current = v.from ?? 'all'
+  return (
+    <Box key="from-row" gap={2} flexWrap="wrap">
+      {(['all', 'interests', 'chats'] as const).map(from => (
+        <Button
+          key={`from-${from}`}
+          label={counts[from] > 0 ? `${FROM_LABELS[from]} ${counts[from]}` : FROM_LABELS[from]}
+          plain
+          dimColor={from !== current}
+          onPress={() => setFrom($, from)}
+        />
+      ))}
+    </Box>
+  )
+}
+
 async function closePane($: $) {
   await $.ui.close({ id: PANE })
 }
@@ -1446,14 +1564,6 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
         {keyHint(ctx)}
       </Text>
     )
-  const tabs = TAB_ORDER.map((mode: Mode) =>
-    key(
-      `tab-${mode}`,
-      TAB_LABELS[d.density][mode],
-      () => setMode($, mode),
-      { hotkey: TAB_KEYS[mode], dimColor: mode !== v.mode },
-    ),
-  )
   const help = v.isHelp && (
     <Box flexDirection="column" marginTop={1}>
       {HELP_LINES.map(([keys, what]) => (
@@ -1483,9 +1593,6 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
             {actions}
           </Box>
         </Box>
-        <Box gap={1} flexWrap="wrap">
-          {tabs}
-        </Box>
         {help}
       </Box>
     )
@@ -1504,16 +1611,6 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
       )}
       <Box gap={1} flexWrap="wrap">
         {actions}
-      </Box>
-      <Box gap={1} flexWrap="wrap">
-        {TAB_ORDER.map((mode: Mode) =>
-          key(
-            `tab-${mode}`,
-            TAB_LABELS[d.density][mode],
-            () => setMode($, mode),
-            { hotkey: TAB_KEYS[mode], dimColor: mode !== v.mode },
-          ),
-        )}
       </Box>
       <Text dimColor>
         {due} due{toLearn > 0 ? ` · ${toLearn} to learn` : ''}{busy === null ? '' : ` · ⟳ ${busy.label}`}
@@ -1684,7 +1781,7 @@ function WelcomeTab($: $, d: Draw, v: View, s: StudySettings) {
 }
 
 /** The learn tab: one lesson to read before its cards are tested. */
-function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, waiting: number, busy: Generating | null) {
+function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, waiting: number, busy: Generating | null, from: LearnFrom = 'all', i?: Insights) {
   const { Box, Text, Button } = d.ui
   if (id === PENDING || (id === null && busy?.noun === 'lesson')) {
     return cardFrame(
@@ -1703,11 +1800,30 @@ function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, 
       d,
       'lesson',
       <Box flexDirection="column" gap={1}>
-        <Text bold>Nothing new to learn 🎉</Text>
-        <Text dimColor wrap="wrap">
-          Every card has been taught. Get new lessons on your weakest topics and interests.
-        </Text>
-        <Button key="learn-write" label={`Get ${LESSONS_PER_CALL} lessons`} variant="primary" autoFocus onPress={() => nextOnLearnTab($, false)} />
+        <Text bold>{from === 'chats' ? 'Nothing new from your chats' : from === 'interests' ? 'Nothing new from your interests' : 'Nothing new to learn 🎉'}</Text>
+        {from === 'chats' && (i?.work.length ?? 0) === 0 ? (
+          <Box flexDirection="column" gap={1}>
+            <Text dimColor wrap="wrap">
+              No chat topics this week yet. Chat a few turns, or make cards from this chat now.
+            </Text>
+            <Button key="learn-from-chat" label="Cards from this chat" variant="primary" autoFocus onPress={() => generate($, 'this chat', () => fromChat($))} />
+          </Box>
+        ) : from === 'interests' && (i?.savedInterests.length ?? 0) === 0 ? (
+          <Text dimColor wrap="wrap">
+            No interests yet. Add one with /study &lt;topic&gt; or the more tab.
+          </Text>
+        ) : (
+          <Box flexDirection="column" gap={1}>
+            <Text dimColor wrap="wrap">
+              {from === 'chats'
+                ? `Get lessons on what your chats touched: ${(i?.work ?? []).slice(0, 3).map(w => w.topic).join(', ')}.`
+                : from === 'interests'
+                  ? `Get lessons on your interests: ${(i?.savedInterests ?? []).slice(0, 3).join(', ')}.`
+                  : 'Every card has been taught. Get new lessons on your weakest topics and interests.'}
+            </Text>
+            <Button key="learn-write" label={`Get ${LESSONS_PER_CALL} lessons`} variant="primary" autoFocus onPress={() => nextOnLearnTab($, false)} />
+          </Box>
+        )}
       </Box>,
     )
   }
@@ -2605,7 +2721,7 @@ export const register: Register = on => {
       const id = await read($, lessonNow)
       const lesson = id === null || id === PENDING ? undefined : findLesson(id, cards, await read($, lessons))
       if (lesson !== undefined) markShown(lesson.id, await $.clock.now())
-      body = LearnTab($, d, id, lesson, (await read($, lessonQueue)).length, await read($, generating))
+      body = LearnTab($, d, id, lesson, (await read($, lessonQueue)).length, await read($, generating), v.from ?? 'all', i)
     } else if (v.mode === 'progress') {
       body = InsightsTab($, d, v, i)
     } else if (v.mode === 'settings') {
@@ -2632,8 +2748,23 @@ export const register: Register = on => {
     // below share the free rows, and shrink to nothing when the content is taller.
     const rows = e.props.scroll?.bodyRows ?? 0
     const isCentered = v.mode === 'welcome' || v.mode === 'learn' || v.mode === 'review' || v.mode === 'quiz'
+    const hasFilter = v.mode === 'learn' || v.mode === 'review' || v.mode === 'quiz'
+    let counts: Record<LearnFrom, number> = { all: 0, interests: 0, chats: 0 }
+    if (v.mode === 'learn') counts = await learnCounts($)
+    else if (hasFilter) {
+      const due = dueCards(cards, i.now).filter(c => v.mode !== 'quiz' || c.choices.length > 0)
+      counts = {
+        all: due.length,
+        interests: due.filter(c => c.source === 'interest').length,
+        chats: due.filter(c => c.source === 'chat').length,
+      }
+    }
     return (
       <Box flexDirection="column" minHeight={rows} width={d.width}>
+        <Box key="top" flexDirection="column" flexShrink={0}>
+          {TopBar($, d, v)}
+          {hasFilter && FilterRow($, d, v, counts)}
+        </Box>
         {isCentered && <Box key="space-above" flexGrow={1} />}
         <Box flexDirection="column" gap={1} flexShrink={0}>
           {body}

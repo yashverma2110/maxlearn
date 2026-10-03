@@ -91,6 +91,9 @@ export type ChatSession = {
 /** Topic mentions in chat per local day: `{ "2026-10-03": { postgres: 2 } }`. */
 export type ChatTopics = Record<string, Record<string, number>>
 
+/** The source filter on learn, review and quiz. */
+export type LearnFrom = 'all' | 'interests' | 'chats'
+
 export type InsightsView = 'overview' | 'topics' | 'work' | 'chats'
 
 /** Cards being written now: what for, and since when. */
@@ -114,6 +117,8 @@ export type Lesson = {
   example?: string
   /** Terms in the lesson a learner may not know; each can be explained. */
   terms?: string[]
+  /** Where it came from: an interest (default) or the user's chats. */
+  source?: 'interest' | 'chat'
   /** The card this lesson teaches in depth, when it came from Teach me. */
   fromCard?: string
   /** The term this lesson explains, when it came from Explain. */
@@ -146,6 +151,8 @@ export type View = {
   picked?: string[]
   /** Settings: the reset button was pressed once and waits for a confirm. */
   isConfirmingReset?: boolean
+  /** Learn, review and quiz show only what came from here. */
+  from?: LearnFrom
   /** Where Next on a Teach-me lesson goes back to. */
   returnTo?: Mode
 }

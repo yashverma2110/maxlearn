@@ -1,4 +1,4 @@
-import type { Card, Lesson } from '../types'
+import type { Card, LearnFrom, Lesson } from '../types'
 import { isToLearn, normTopic, toCards } from './srs'
 
 /** The first review after learning: soon enough to catch what did not stick. */
@@ -174,4 +174,15 @@ Write ONE lesson that teaches the idea in depth:
 
 Reply with ONLY a JSON array with one lesson:
 [{"topic": "${card.topic}", "title": "...", "body": "...", "example": "...", "terms": ["..."], "cards": [{"front": "...", "back": "...", "choices": ["...", "...", "...", "..."], "answer": 0}]}]`
+}
+
+/** Where a lesson came from: its card's source for a card lesson, else its own (interest by default). */
+export function lessonSource(lesson: Lesson, deck: Card[]): 'interest' | 'chat' {
+  if (isCardLesson(lesson.id)) return deck.find(c => `${CARD_PREFIX}${c.id}` === lesson.id)?.source ?? 'interest'
+  return lesson.source ?? 'interest'
+}
+
+/** Whether something from `source` shows under the `from` filter. */
+export function fromMatches(source: 'interest' | 'chat', from: LearnFrom | undefined): boolean {
+  return from === undefined || from === 'all' || (from === 'chats' ? source === 'chat' : source === 'interest')
 }
