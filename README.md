@@ -12,19 +12,41 @@ Most engineering knowledge is picked up in passing: a fix for a Redis eviction b
 
 ## Install
 
-In Claude Code:
+**Recommended:** add the [yashverma plugin marketplace](https://github.com/yashverma2110/claude-plugins) once, then install. In Claude Code:
+
+```
+/plugin marketplace add yashverma2110/claude-plugins
+/plugin install maxlearn@yashverma
+```
+
+Or from a terminal:
+
+```sh
+claude plugin marketplace add yashverma2110/claude-plugins
+claude plugin install maxlearn@yashverma
+```
+
+To update later: `/plugin marketplace update yashverma`.
+
+<details>
+<summary>Other ways to install</summary>
+
+Straight from this repo (it is a marketplace too):
 
 ```
 /plugin marketplace add yashverma2110/maxlearn
 /plugin install maxlearn@maxlearn
 ```
 
-Or run it from a clone:
+From a clone, for one session (handy for development):
 
 ```sh
 git clone https://github.com/yashverma2110/maxlearn.git
 claude --plugin-dir ./maxlearn
 ```
+
+Use one way only: two installs load two copies.
+</details>
 
 The pane docks beside the chat in terminals at least 144 columns wide; otherwise run `/study`. Your data lives in Claude Code's plugin store on your machine, so it carries across sessions.
 
