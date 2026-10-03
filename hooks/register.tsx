@@ -86,7 +86,7 @@ import {
   nextCardToLearn,
   parseLessons,
 } from './lessons'
-import { CARD_RUBRIC, LEVEL_BRIEF, levelFor } from './prompts'
+import { CARD_RUBRIC, LEVEL_BRIEF, levelFor, simplifyPrompt } from './prompts'
 import { orderedTips, tipFor, type TipContext } from './tips'
 
 // Everything that takes `$` lives in this file: the engine follows `$` into
@@ -331,7 +331,7 @@ export async function fromInterest($: $, topic: string): Promise<number> {
   )
   const recall = t?.recentAccuracy ?? t?.accuracy ?? null
   const reviewsOfTopic = log.filter(r => r.topic === topic).length
-  const level = levelFor(t && { cards: t.cards, mastery: t.mastery, recall, reviews: reviewsOfTopic })
+  const level = levelFor(t && { cards: t.cards, mastery: t.mastery, recall, reviews: reviewsOfTopic }, (await readSimpler($))[topic] ?? 0)
   const known = cards
     .filter(c => c.topic === topic)
     .slice(-30)
@@ -354,21 +354,21 @@ ${CARD_SHAPE}`,
 
 // Requests made while cards are being written wait here, one per label, and
 // run in turn. Module state: a reload drops the queue with the work in flight.
-type Noun = 'card' | 'lesson'
-const queue: { label: string; work: () => Promise<number>; isAuto: boolean; noun: Noun }[] = []
+type Noun = 'card' | 'lesson' | 'simpler lesson'
+const queue: { label: string; work: () => Promise<number>; isAuto: boolean; noun: Noun; lessonId?: string }[] = []
 
 /** Runs generation off the current dispatch so a turn never waits on it; one at a time, the rest queued. */
-export function generate($: $, label: string, work: () => Promise<number>, isAuto = false, noun: Noun = 'card') {
+export function generate($: $, label: string, work: () => Promise<number>, isAuto = false, noun: Noun = 'card', lessonId?: string) {
   $.clock.after(0, async () => {
     const busy = await read($, generating)
     if (busy !== null) {
-      if (busy.label === label || queue.some(q => q.label === label)) return
-      queue.push({ label, work, isAuto, noun })
+      if ((busy.label === label && busy.noun === noun) || queue.some(q => q.label === label && q.noun === noun)) return
+      queue.push({ label, work, isAuto, noun, lessonId })
       if (!isAuto) $.ui.toast(`📚 Queued: ${noun}s ${writingWhat(label)}`)
       return
     }
     const startedAt = await $.clock.now()
-    await update($, generating, () => ({ label, startedAt, noun }))
+    await update($, generating, () => ({ label, startedAt, noun, lessonId }))
     await showStatus($)
     // Animate the status line; a reload drops the timer and session.start clears the state.
     const spinner = $.clock.every(120, () => void showStatus($))
@@ -382,7 +382,7 @@ export function generate($: $, label: string, work: () => Promise<number>, isAut
       await update($, generating, () => null)
       await showStatus($)
       const nextUp = queue.shift()
-      if (nextUp !== undefined) generate($, nextUp.label, nextUp.work, nextUp.isAuto, nextUp.noun)
+      if (nextUp !== undefined) generate($, nextUp.label, nextUp.work, nextUp.isAuto, nextUp.noun, nextUp.lessonId)
     }
   })
 }
@@ -402,9 +402,9 @@ async function lessonCandidates($: $): Promise<string[]> {
  * One model call that writes `LESSONS_PER_CALL` lessons, each with its cards:
  * the first goes to whoever is waiting, the rest wait for the next Next.
  */
-async function writeLessons($: $): Promise<number> {
+async function writeLessons($: $, aim?: string[]): Promise<number> {
   const known = await read($, lessons)
-  const topics = lessonTopics(await lessonCandidates($), known)
+  const topics = aim ?? lessonTopics(await lessonCandidates($), known)
   if (topics.length === 0) {
     $.ui.toast('📖 Add an interest first: /study <topic>')
     return 0
@@ -413,11 +413,15 @@ async function writeLessons($: $): Promise<number> {
   const cards = await read($, deck)
   const log = await read($, reviews)
   const insights = topicInsights(cards, log, await read($, chatTopics), await read($, interests), now)
+  const simpler = await readSimpler($)
   const brief = topics
     .map((topic, n) => {
       const t = insights.find(x => x.topic === topic)
       const recall = t?.recentAccuracy ?? t?.accuracy ?? null
-      const level = levelFor(t && { cards: t.cards, mastery: t.mastery, recall, reviews: log.filter(r => r.topic === topic).length })
+      const level = levelFor(
+        t && { cards: t.cards, mastery: t.mastery, recall, reviews: log.filter(r => r.topic === topic).length },
+        simpler[topic] ?? 0,
+      )
       return `${n + 1}. "${topic}" for ${LEVEL_BRIEF[level]}`
     })
     .join('\n')
@@ -482,16 +486,79 @@ async function takeQueued($: $): Promise<string | undefined> {
  * lesson waiting in the queue (free), else `pending` while two are written,
  * or undefined when `mayWrite` is false.
  */
+// Card lessons skipped on the learn tab: they go to the back of the line until
+// every other card and queued lesson has had its turn. Module state.
+const skippedCards = new Set<string>()
+
 async function takeNextLesson($: $, mayWrite: boolean): Promise<string | undefined> {
   const shown = new Set([await read($, lessonNow), ...Object.values(await read($, chatRuns))].filter((x): x is string => typeof x === 'string'))
-  const card = nextCardToLearn(await read($, deck), shown)
+  const cards = await read($, deck)
+  const card = nextCardToLearn(cards, new Set([...shown, ...skippedCards]))
   if (card !== undefined) return cardLesson(card).id
   const queued = await takeQueued($)
   if (queued !== undefined) return queued
+  // Only skipped cards are left: start them over, oldest first.
+  const again = nextCardToLearn(cards, shown)
+  if (again !== undefined) {
+    skippedCards.clear()
+    return cardLesson(again).id
+  }
   if (!mayWrite) return undefined
   const [topic] = lessonTopics(await lessonCandidates($), await read($, lessons))
   generate($, topic ?? 'your interests', () => writeLessons($), false, 'lesson')
   return PENDING
+}
+
+// ── Simplify ──
+
+/** How many times each topic was simplified: each one steps its next lessons down a level. */
+async function readSimpler($: $): Promise<Record<string, number>> {
+  return ((await $.store.get('simpler')) as Record<string, number> | undefined) ?? {}
+}
+
+/** Queues a simpler rewrite of lesson `id`, in place; the topic's later lessons start a level lower. */
+function simplify($: $, id: string) {
+  void (async () => {
+    const lesson = findLesson(id, await read($, deck), await read($, lessons))
+    if (lesson === undefined) return
+    generate($, lesson.topic, () => simplifyLesson($, id), false, 'simpler lesson', id)
+  })()
+}
+
+async function simplifyLesson($: $, id: string): Promise<number> {
+  const deckNow = await read($, deck)
+  const lesson = findLesson(id, deckNow, await read($, lessons))
+  if (lesson === undefined) return 0
+  const cardId = isCardLesson(id) ? id.slice('card:'.length) : undefined
+  const cards = cardId !== undefined ? deckNow.filter(c => c.id === cardId) : lesson.cards
+  const reply = await $.model.complete({
+    model: (await read($, settings)).interestModel,
+    maxTokens: 2048,
+    timeoutMs: 90_000,
+    prompt: `${simplifyPrompt(lesson, cards)}\n\n${STE_RULES}`,
+  })
+  if (!reply.isAnswered) return 0
+  const now = await $.clock.now()
+  // Parse against a deck without the old cards, so their fronts do not count as repeats.
+  const others = deckNow.filter(c => !cards.some(o => o.id === c.id))
+  const [simpler] = parseLessons(reply.text, others, [], now)
+  if (simpler === undefined) return 0
+
+  if (cardId !== undefined) {
+    // A card lesson is the card itself: keep its id and schedule, take the simpler words.
+    const words = simpler.cards[0] ?? { front: simpler.title, back: simpler.body, choices: [], answer: -1 }
+    await saveDeck($, list =>
+      list.map(c => (c.id === cardId ? { ...c, front: words.front, back: words.back, choices: words.choices, answer: words.answer } : c)),
+    )
+  } else {
+    const next = await update($, lessons, list =>
+      list.map(l => (l.id === id ? { ...simpler, id: l.id, createdAt: l.createdAt, topic: l.topic } : l)),
+    )
+    await $.store.set('lessons', next)
+  }
+  const counts = await readSimpler($)
+  await $.store.set('simpler', { ...counts, [lesson.topic]: (counts[lesson.topic] ?? 0) + 1 })
+  return 1
 }
 
 /** Reading a lesson is learning it: its card is marked learned, or its cards join the deck. */
@@ -511,10 +578,30 @@ async function markLearned($: $, id: string | null | undefined) {
 /** The learn tab's Next (`isLearned`) or skip: learn the one shown only on Next, then show the next (writing two when none waits). */
 async function nextOnLearnTab($: $, isLearned: boolean) {
   // Skipped, a card lesson stays to learn; a written lesson is let go and its cards never join.
-  if (isLearned) await markLearned($, await read($, lessonNow))
+  const current = await read($, lessonNow)
+  if (isLearned) await markLearned($, current)
+  else if (current !== null && isCardLesson(current)) skippedCards.add(current)
   await update($, lessonNow, () => null)
   const next = await takeNextLesson($, true)
   await update($, lessonNow, () => next ?? null)
+}
+
+/**
+ * Adds an interest and shows it at once: saved (insights and more list it on
+ * the next draw), the learn tab waiting on it, and two lessons on it queued.
+ */
+async function addInterest($: $, raw: string): Promise<string | undefined> {
+  const topic = normTopic(raw)
+  if (topic === 'general' || raw.trim() === '') return undefined
+  const saved = await update($, interests, list => (list.includes(topic) ? list : [...list, topic]))
+  await $.store.set('interests', saved)
+  await stampAuto($, topic)
+  // The learn tab shows the spinner now and the first lesson the moment it lands.
+  const now = await read($, lessonNow)
+  if (now === null || now === PENDING) await update($, lessonNow, () => PENDING)
+  await setMode($, 'learn')
+  generate($, topic, () => writeLessons($, Array.from({ length: LESSONS_PER_CALL }, () => topic)), false, 'lesson')
+  return topic
 }
 
 // ── Automatic interest cards ──
@@ -586,6 +673,7 @@ export async function readInsights($: $) {
     strong: strong(topics),
     interests: interestRank(topics),
     work: workTopics(topics),
+    busy: await read($, generating),
     settings: await read($, settings),
     chats: await read($, chatSessions),
     usage: topicUsage(await read($, chatSessions), log, await read($, learnTime)),
@@ -611,11 +699,17 @@ export const focusLabel = (focus: StudySettings['focus']) =>
 
 export async function statsText($: $): Promise<string> {
   const i = await readInsights($)
-  if (i.overview.totalCards === 0 && i.work.length === 0) return 'No cards yet.'
+  const busy = await read($, generating)
+  const writing = busy === null ? [] : [`⟳ Writing ${busy.noun ?? 'card'}s ${writingWhat(busy.label)}…`]
+  if (i.overview.totalCards === 0 && i.work.length === 0) {
+    if (i.savedInterests.length === 0) return 'No cards or interests yet. Add one: /study <topic>'
+    return [...writing, `Interests: ${i.savedInterests.join(', ')}`, 'No cards yet: they arrive with your first lessons (/study learn).'].join('\n')
+  }
   const o = i.overview
   const list = (title: string, rows: { topic: string; reason: string }[]) =>
     rows.length === 0 ? [] : [title, ...rows.map(r => `  ${r.topic}: ${r.reason}`)]
   return [
+    ...writing,
     `Streak ${o.streakDays}d · ${o.reviewsToday} today · ${sparkline(o.reviews7d)} · retention ${pct(o.retention30d)} · mature ${o.matureCards}/${o.totalCards} · ${o.dueNow} due`,
     `Focus: ${focusLabel(i.focus)}`,
     ...list('Improve', i.improve),
@@ -1050,7 +1144,6 @@ function Footer($: $, d: Draw, v: View, ctx: KeyContext, card: Card | undefined,
     if (!v.isRevealed) actions.push(key('skip', 'skip', () => runKey($, { type: 'skip' }, card), { hotkey: 'n' }))
     else actions.push(key('drop', 'drop', () => dropCard($, card), { hotkey: 'd' }))
   }
-  if (v.mode === 'learn') actions.push(key('learn-skip', 'skip', () => nextOnLearnTab($, false), { hotkey: 'n' }))
   actions.push(
     key('undo', 'undo', () => undoLast($), { hotkey: 'u' }),
     key('help', 'keys', () => runKey($, { type: 'help' }, card), { hotkey: 'h' }),
@@ -1230,7 +1323,17 @@ function LearnTab($: $, d: Draw, id: string | null, lesson: Lesson | undefined, 
           <Text dimColor wrap="wrap">
             {joins}
           </Text>
-          <Button key="learn-next" label="Next" variant="primary" autoFocus onPress={() => nextOnLearnTab($, true)} />
+          <Box gap={1}>
+            <Button key="learn-next" label="Next" variant="primary" autoFocus onPress={() => nextOnLearnTab($, true)} />
+            <Button key="learn-skip" label="Skip" hotkey="n" onPress={() => nextOnLearnTab($, false)} />
+            <Button
+              key="learn-simplify"
+              label={busy?.lessonId === lesson.id ? '⟳ Simplifying…' : 'Simplify'}
+              hotkey="z"
+              dimColor
+              onPress={() => (busy?.lessonId === lesson.id ? undefined : simplify($, lesson.id))}
+            />
+          </Box>
         </Box>,
       )}
       {waiting > 0 && (
@@ -1408,9 +1511,15 @@ export function InsightsTab($: $, d: Draw, v: View, i: Insights) {
     const o = i.overview
     content =
       o.totalCards === 0 ? (
-        <Text dimColor wrap="wrap">
-          Review a few cards to see trends.
-        </Text>
+        <Box flexDirection="column" gap={1}>
+          {i.busy !== null && <Text>⟳ Writing {i.busy.noun ?? 'card'}s {writingWhat(i.busy.label)}…</Text>}
+          <Text>
+            Interests: {i.savedInterests.length === 0 ? <Text dimColor>none yet</Text> : i.savedInterests.join(', ')}
+          </Text>
+          <Text dimColor wrap="wrap">
+            Trends show up once you learn and review a few cards.
+          </Text>
+        </Box>
       ) : (
         <Box flexDirection="column" gap={1}>
           {StatTiles(d, [
@@ -1720,9 +1829,19 @@ export function MoreTab($: $, d: Draw, v: View, i: Insights) {
                 <Button key={`more-${topic}`} label={`+3 ${topic}`} dimColor onPress={() => generate($, topic, () => fromInterest($, topic))} />
               ))}
             </Box>
-            <Text dimColor wrap="wrap">
-              Add one with /study &lt;topic&gt;.
-            </Text>
+            {d.ui.Input ? (
+              <d.ui.Input
+                key="add-interest"
+                label="+ "
+                placeholder="add an interest, e.g. kafka"
+                submitLabel="add"
+                onSubmit={(value: string) => addInterest($, value)}
+              />
+            ) : (
+              <Text dimColor wrap="wrap">
+                Add one with /study &lt;topic&gt;.
+              </Text>
+            )}
           </Box>,
         )}
         {section(
@@ -1839,12 +1958,10 @@ export const register: Register = on => {
     if (word === 'tips' || word === 'help') return { text: await tipsText($) }
 
     if (arg !== '') {
-      const topic = normTopic(arg)
-      const saved = await update($, interests, list => (list.includes(topic) ? list : [...list, topic]))
-      await $.store.set('interests', saved)
-      generate($, topic, () => fromInterest($, topic))
+      const topic = await addInterest($, arg)
       await $.ui.open({ id: PANE, title: TITLE, closeOnEscape: true })
-      return { text: `Added "${topic}" to your interests; writing cards…` }
+      if (topic === undefined) return { text: 'Name a topic: /study <topic>' }
+      return { text: `Added "${topic}" to your interests. Writing ${LESSONS_PER_CALL} lessons on it now; the learn tab shows them as they land.` }
     }
 
     await $.ui.open({ id: PANE, title: TITLE, closeOnEscape: true })
@@ -1891,6 +2008,7 @@ export const register: Register = on => {
     if (id === undefined) return next(e) // a row from before a reload: its text says it all
     const { Box, Text, Button } = $.ui.resolve(e)
     const lesson = id === PENDING ? undefined : findLesson(id, await read($, deck), await read($, lessons))
+    const busy = await read($, generating)
     const onNext = async () => {
       await markLearned($, id)
       await update($, chatRuns, r => ({ ...r, [run]: PENDING }))
@@ -1923,6 +2041,11 @@ export const register: Register = on => {
         )}
         <Box gap={1}>
           <Button key={`chat-next-${run}`} label="Next" variant="primary" onPress={onNext} />
+          <Button
+            key={`chat-simplify-${run}`}
+            label={busy?.lessonId === lesson.id ? '⟳ Simplifying…' : 'Simplify'}
+            onPress={() => (busy?.lessonId === lesson.id ? undefined : simplify($, lesson.id))}
+          />
           <Text dimColor>
             {isCard ? 'Next adds this card to your review.' : `Next adds ${lesson.cards.length} card${lesson.cards.length === 1 ? '' : 's'} to your review.`}
           </Text>

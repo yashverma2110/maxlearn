@@ -30,3 +30,12 @@ test('level starts senior, steps down on poor recall, up once mastered', async (
   expect(levelFor({ cards: 6, mastery: 0.8, recall: 0.9, reviews: 12 })).toBe('staff')
   expect(levelFor({ cards: 6, mastery: 0.5, recall: 0.9, reviews: 12 })).toBe('senior')
 })
+
+test('each Simplify steps the level down, to intro at the lowest', async () => {
+  const strong = { cards: 6, mastery: 0.8, recall: 0.9, reviews: 12 }
+  expect(levelFor(strong)).toBe('staff')
+  expect(levelFor(strong, 1)).toBe('senior')
+  expect(levelFor(undefined, 1)).toBe('mid')
+  expect(levelFor(undefined, 2)).toBe('intro')
+  expect(levelFor(undefined, 9)).toBe('intro')
+})

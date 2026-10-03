@@ -140,6 +140,7 @@ export const HELP_LINES: [string, string][] = [
   ['enter', 'press the highlighted button'],
   ['u', 'undo the last grade'],
   ['d', 'drop a bad card for good'],
+  ['z', 'simplify the lesson shown'],
   ['r q p m o', 'review · quiz · insights · more · settings'],
   ['h', 'show or hide this list'],
   ['x', 'close the pane'],

@@ -146,3 +146,184 @@ test('/study learn posts a lesson row; Next swaps the next one into the same row
   expect(await row.find({ text: /Because b\./ })).toBeDefined()
   await row.unmount()
 })
+
+test('adding an interest shows at once and queues two lessons on it', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off' } })
+  const prompts: string[] = []
+  let finish: () => void = () => {}
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', (_$: unknown, e: { prompt: string }) => {
+    prompts.push(e.prompt)
+    return new Promise(resolve => {
+      finish = () => resolve({ value: { isAnswered: true, text: TWO_LESSONS.replaceAll('postgres', 'redis'), usage: USAGE } })
+    })
+  })
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+
+  const ran = (await $.command.run({ command: 'study', args: 'Redis' } as never)) as { text: string }
+  expect(ran.text).toContain('Added "redis"')
+
+  // At once, before the model answers: learn tab, spinner, interest on the dashboard.
+  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  expect(await ui.find({ text: /Writing 2 lessons/ })).toBeDefined()
+  await clock.advance(10)
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toContain('1. "redis"')
+  expect(prompts[0]).toContain('2. "redis"')
+  await ui.press({ key: 'tab-progress' })
+  await ui.press({ key: 'ins-overview' })
+  expect(await ui.find({ text: /Interests: redis/ })).toBeDefined()
+  expect(await ui.find({ text: /Writing lessons on redis/ })).toBeDefined()
+  const stats = (await $.command.run({ command: 'study', args: 'stats' } as never)) as { text: string }
+  expect(stats.text).toContain('Interests: redis')
+
+  // The lessons land and the learn tab shows the first; the second waits.
+  finish()
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  await ui.press({ key: 'tab-learn' })
+  expect(await ui.find({ text: /AOF everysec/ })).toBeDefined()
+  expect(await ui.find({ text: /1 lesson ready/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the more tab adds an interest from its field', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { settings: { autoPeriod: 'off' } })
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', async () => ({ value: { isAnswered: true, text: '[]', usage: USAGE } }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab-add' })
+  await ui.input({ key: 'add-interest', text: 'Kafka' })
+  expect((await ui.find({ key: 'tab-learn' }))?.props.label).toBe('•learn')
+  await ui.press({ key: 'tab-add' })
+  expect(await ui.find({ key: 'more-kafka' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the lesson card carries its own Skip, next to Next', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { deck: [card('a'), card('b', { createdAt: 5 })], settings: { autoPeriod: 'off' } })
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab-learn' })
+
+  const tree = JSON.stringify(await ui.drawn())
+  const frame = tree.slice(tree.indexOf('"borderStyle":"round"'), tree.indexOf('── Shortcuts'))
+  expect(frame).toContain('"key":"learn-next"')
+  expect(frame).toContain('"key":"learn-skip"') // in the card, not only the footer
+  expect((await ui.find({ key: 'learn-skip' }))?.props.label).toBe('Skip')
+  expect((await ui.findAll({ key: 'learn-skip' })).length).toBe(1)
+
+  await ui.press({ key: 'learn-skip' })
+  expect(await ui.find({ text: /Because b\./ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('skipped cards wait their turn, then come around again', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { deck: [card('a', { createdAt: 1 }), card('b', { createdAt: 2 })], settings: { autoPeriod: 'off' } })
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab-learn' })
+  expect(await ui.find({ text: /Because a\./ })).toBeDefined()
+  await ui.press({ key: 'learn-skip' })
+  expect(await ui.find({ text: /Because b\./ })).toBeDefined()
+  await ui.press({ key: 'learn-skip' })
+  expect(await ui.find({ text: /Because a\./ })).toBeDefined() // both skipped: back to the oldest
+  await ui.press({ key: 'learn-next' })
+  expect(await ui.find({ text: /Because b\./ })).toBeDefined()
+  await ui.unmount()
+})
+
+const SIMPLER = JSON.stringify([
+  {
+    topic: 'redis', title: 'Redis saves to disk once a second', body: 'Think of a notebook you copy to a safe each second.',
+    cards: [{ front: 'Why can Redis lose the last second of writes?', back: 'It copies to disk only once each second.' }],
+  },
+])
+
+test('Simplify rewrites the same lesson in place, and later lessons start a level lower', async ($, on) => {
+  const clock = mock.clock(on)
+  const store = mock.store
+  store(on, { settings: { autoPeriod: 'off' } })
+  const prompts: string[] = []
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', async (_$: unknown, e: { prompt: string }) => {
+    prompts.push(e.prompt)
+    const text = e.prompt.includes('too hard') ? SIMPLER : TWO_LESSONS
+    return { value: { isAnswered: true, text, usage: USAGE } }
+  })
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await $.command.run({ command: 'study', args: 'redis' } as never)
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  expect(await ui.find({ text: /AOF everysec/ })).toBeDefined()
+  expect(prompts[0]).toContain('a senior engineer')
+
+  await ui.press({ key: 'learn-simplify' })
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  expect(prompts[1]).toContain('too hard')
+  expect(prompts[1]).toContain('AOF everysec can lose one second of writes')
+  expect(await ui.find({ text: /once a second/ })).toBeDefined()
+  expect(await ui.find({ text: /AOF everysec/ })).toBeUndefined()
+  expect(await ui.find({ text: /Adds 1 card|add 1 card/ })).toBeDefined()
+
+  // Learn it: the simpler card joins, not the old one.
+  await ui.press({ key: 'learn-next' })
+  await ui.press({ key: 'learn-next' }) // the second queued lesson (postgres)
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  // The next lessons on redis are written one level lower.
+  expect(prompts.at(-1)).toContain('"redis" for a mid-level engineer')
+  await ui.unmount()
+})
+
+test('Simplify on a new card rewrites the card itself, keeping its place', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on, { deck: [card('a', { topic: 'redis' })], settings: { autoPeriod: 'off' } })
+  on('session.start', async (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  on('command.register', async (_$: unknown, e: { name: string }) => ({ value: { command: e.name } }))
+  on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+  on('ui.focus', async () => ({}))
+  on('model.complete', async () => ({ value: { isAnswered: true, text: SIMPLER, usage: USAGE } }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'maxlearn', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'tab-learn' })
+  expect(await ui.find({ text: /Because a\./ })).toBeDefined()
+  await ui.press({ key: 'learn-simplify' })
+  for (let n = 0; n < 4; n++) await clock.advance(10)
+  expect(await ui.find({ text: /copies to disk only once each second/ })).toBeDefined()
+  expect(await ui.find({ text: /Because a\./ })).toBeUndefined()
+  await ui.unmount()
+})

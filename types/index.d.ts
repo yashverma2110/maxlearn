@@ -88,7 +88,13 @@ export type ChatTopics = Record<string, Record<string, number>>
 export type InsightsView = 'overview' | 'topics' | 'work' | 'chats'
 
 /** Cards being written now: what for, and since when. */
-export type Generating = { label: string; startedAt: number; noun?: 'card' | 'lesson' }
+export type Generating = {
+  label: string
+  startedAt: number
+  noun?: 'card' | 'lesson' | 'simpler lesson'
+  /** The lesson being rewritten, for Simplify. */
+  lessonId?: string
+}
 
 /**
  * Something to read before reviewing: a generated lesson that carries its

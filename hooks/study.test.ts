@@ -131,7 +131,7 @@ test('insights tab: sub-views on every surface, +3 for a thin work topic', async
     expect(await ui.find({ key: 'work-kafka' })).toBeDefined()
     expect(await ui.find({ key: 'work-more-kafka' })).toBeDefined()
     await ui.press({ key: 'ins-overview' })
-    expect(await ui.find({ text: /Review a few cards/ })).toBeDefined()
+    expect(await ui.find({ text: /Trends show up once you learn/ })).toBeDefined()
     await ui.unmount()
   }
 })

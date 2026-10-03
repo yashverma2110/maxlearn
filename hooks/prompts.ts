@@ -3,9 +3,12 @@
  * enforces it. Pure: no `$` here.
  */
 
-export type Level = 'mid' | 'senior' | 'staff'
+export type Level = 'intro' | 'mid' | 'senior' | 'staff'
+
+const LEVELS: Level[] = ['intro', 'mid', 'senior', 'staff']
 
 export const LEVEL_BRIEF: Record<Level, string> = {
+  intro: 'someone new to the topic: explain each term, one step at a time, with an everyday comparison',
   mid: 'a mid-level engineer: solid on fundamentals, learning how things work under the hood',
   senior:
     'a senior engineer: knows the basics well; wants internals, trade-offs, failure modes and production gotchas',
@@ -21,17 +24,45 @@ export type LevelSignal = {
   recall: number | null
   /** Reviews behind `recall`. */
   reviews: number
+  /** Times the learner asked for a simpler lesson on this topic. */
+  simplified?: number
 }
 
 /**
  * Starts senior; steps down to mid when recall is poor on enough reviews,
- * up to staff once the topic is mastered and recalled well.
+ * up to staff once the topic is mastered and recalled well. Each Simplify on
+ * the topic steps one level further down, to intro at the lowest.
  */
-export function levelFor(s: LevelSignal | undefined): Level {
-  if (s === undefined || s.recall === null || s.reviews < 5) return 'senior'
-  if (s.recall < 0.6) return 'mid'
-  if (s.mastery >= 0.7 && s.recall >= 0.85) return 'staff'
-  return 'senior'
+export function levelFor(s: LevelSignal | undefined, simplified = s?.simplified ?? 0): Level {
+  const base: Level =
+    s === undefined || s.recall === null || s.reviews < 5
+      ? 'senior'
+      : s.recall < 0.6
+        ? 'mid'
+        : s.mastery >= 0.7 && s.recall >= 0.85
+          ? 'staff'
+          : 'senior'
+  return LEVELS[Math.max(0, LEVELS.indexOf(base) - simplified)]!
+}
+
+/** The ask for a simpler version of a lesson the learner found too hard. */
+export function simplifyPrompt(lesson: { topic: string; title: string; body: string; example?: string }, cards: { front: string; back: string }[]): string {
+  return `A learner found this lesson on "${lesson.topic}" too hard. Rewrite it to teach the SAME idea more simply:
+- Assume less background. Explain every technical term the first time you use it.
+- Use one everyday comparison, then tie it back to the real mechanism.
+- Use shorter sentences: 3-5 of them.
+- Keep it correct: do not leave out the part that makes the idea true.
+Also rewrite its flashcards so they test the simpler lesson.
+
+The lesson:
+Title: ${lesson.title}
+${lesson.body}${lesson.example ? `\nExample: ${lesson.example}` : ''}
+
+Its cards:
+${cards.map(c => `- Q: ${c.front}\n  A: ${c.back}`).join('\n') || '(none)'}
+
+Reply with ONLY a JSON array with one lesson:
+[{"topic": "${lesson.topic}", "title": "...", "body": "...", "example": "...", "cards": [{"front": "...", "back": "...", "choices": ["...", "...", "...", "..."], "answer": 0}]}]`
 }
 
 export const CARD_RUBRIC = `What makes a good card (follow all):
